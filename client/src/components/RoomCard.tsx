@@ -19,9 +19,8 @@ export default function RoomCard({ room, onJoin }: RoomCardProps) {
 
   return (
     <div
-      className="group bg-bg-card border border-white/5 rounded-2xl overflow-hidden
-        hover:border-red-main/20 hover:shadow-[0_0_20px_rgba(255,0,51,0.1)]
-        transition-all duration-300 cursor-pointer animate-fade-in"
+      className="group bg-bg-card rounded-3xl overflow-hidden
+        cartoon-card cursor-pointer animate-fade-in"
       onClick={onJoin}
     >
       {/* Thumbnail */}
@@ -30,11 +29,11 @@ export default function RoomCard({ room, onJoin }: RoomCardProps) {
           <img
             src={thumbnailUrl}
             alt={room.name}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
             loading="lazy"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-4xl">
+          <div className="w-full h-full flex items-center justify-center text-5xl animate-float">
             🎬
           </div>
         )}
@@ -43,29 +42,31 @@ export default function RoomCard({ room, onJoin }: RoomCardProps) {
 
       {/* Info */}
       <div className="p-4">
-        <h3 className="font-bold text-text-main truncate mb-2">{room.name}</h3>
+        <h3 className="font-extrabold text-text-main truncate mb-2 text-base">{room.name}</h3>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1 text-xs text-text-muted">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            <span className="flex items-center gap-1 text-xs text-text-muted font-bold">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round"
                   d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
               {room.userCount}/{room.maxUsers}
             </span>
-            <span className={`text-xs px-2 py-0.5 rounded-full ${
+            <span className={`text-xs px-2.5 py-1 rounded-xl font-bold border-2 ${
               statusLabel === 'İzleniyor'
-                ? 'bg-red-main/20 text-red-soft'
-                : 'bg-white/5 text-text-muted'
+                ? 'bg-red-main/20 text-red-soft border-red-main/20'
+                : statusLabel === 'Bekliyor'
+                  ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20'
+                  : 'bg-white/5 text-text-muted border-white/5'
             }`}>
-              {statusLabel}
+              {statusLabel === 'İzleniyor' ? '▶ İzleniyor' : statusLabel === 'Bekliyor' ? '⏸ Bekliyor' : '○ Boş'}
             </span>
           </div>
           <button
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-300 ${
+            className={`px-4 py-2 text-xs font-extrabold rounded-xl transition-all duration-200 ${
               room.userCount >= room.maxUsers
-                ? 'bg-white/5 text-text-muted cursor-not-allowed'
-                : 'bg-red-main text-white hover:bg-red-soft glow-red-sm hover:glow-red'
+                ? 'bg-white/5 text-text-muted cursor-not-allowed border-2 border-white/5'
+                : 'bg-red-main text-white cartoon-btn-sm hover:bg-red-soft'
             }`}
             disabled={room.userCount >= room.maxUsers}
             onClick={(e) => {
@@ -73,7 +74,7 @@ export default function RoomCard({ room, onJoin }: RoomCardProps) {
               onJoin();
             }}
           >
-            {room.userCount >= room.maxUsers ? 'Dolu' : 'Katıl'}
+            {room.userCount >= room.maxUsers ? 'Dolu 😔' : 'Katıl →'}
           </button>
         </div>
       </div>

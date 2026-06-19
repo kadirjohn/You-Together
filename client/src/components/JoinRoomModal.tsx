@@ -5,6 +5,38 @@ import { useUIStore } from '../stores/ui.store';
 import { saveSession } from '../lib/session';
 import Modal from './ui/Modal';
 
+/* ── Inline SVG Icons ── */
+const UserIcon = () => (
+  <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="8" r="4" />
+    <path d="M5 20c0-3.87 3.13-7 7-7s7 3.13 7 7" />
+  </svg>
+);
+
+const LockIcon = () => (
+  <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="5" y="11" width="14" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 018 0v4" />
+    <circle cx="12" cy="16" r="1.5" fill="currentColor" />
+  </svg>
+);
+
+const EyeOpenIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+const EyeClosedIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
+    <path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
+    <path d="M14.12 14.12a3 3 0 11-4.24-4.24" />
+    <line x1="1" y1="1" x2="23" y2="23" />
+  </svg>
+);
+
 export default function JoinRoomModal() {
   const navigate = useNavigate();
   const { showJoinModal, joinRoomId, closeJoinModal, addToast } = useUIStore();
@@ -13,17 +45,31 @@ export default function JoinRoomModal() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pinVisible, setPinVisible] = useState(true);
+  const [showEye, setShowEye] = useState(false);
 
   if (!showJoinModal || !joinRoomId) return null;
+
+  const handlePinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setPin(val);
+    if (val.length === 1 && !showEye) {
+      setShowEye(true);
+    }
+    if (val.length === 0) {
+      setShowEye(false);
+      setPinVisible(true);
+    }
+  };
 
   const handleJoin = () => {
     setError('');
     if (!displayName.trim()) {
-      setError('Görünen adınızı girin.');
+      setError('Takma adını gir.');
       return;
     }
     if (!pin.trim()) {
-      setError('PIN girin.');
+      setError('PIN gir.');
       return;
     }
 
@@ -79,40 +125,80 @@ export default function JoinRoomModal() {
   };
 
   return (
-    <Modal open={true} onClose={closeJoinModal} title="Odaya Katıl">
+    <Modal open={true} onClose={closeJoinModal} title="🚪 Odaya Katıl">
       <div className="space-y-3">
-        <input
-          type="text"
-          placeholder="Görünen adın"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          onKeyDown={handleKeyDown}
-          maxLength={24}
-          className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-            text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-            transition-colors text-sm"
-          autoFocus
-        />
-        <input
-          type="text"
-          placeholder="PIN"
-          value={pin}
-          onChange={(e) => setPin(e.target.value)}
-          onKeyDown={handleKeyDown}
-          maxLength={12}
-          className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-            text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-            transition-colors text-sm"
-        />
-        {error && <p className="text-red-soft text-sm">{error}</p>}
+        {/* Display Name */}
+        <div className="relative">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <UserIcon />
+          </div>
+          <input
+            type="text"
+            placeholder="Takma adın"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            onKeyDown={handleKeyDown}
+            maxLength={24}
+            className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
+              text-text-main placeholder-text-muted focus:outline-none
+              text-sm font-semibold"
+            autoFocus
+          />
+        </div>
+
+        {/* PIN */}
+        <div className="relative">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <LockIcon />
+          </div>
+          <input
+            type={pinVisible ? 'text' : 'password'}
+            placeholder="PIN"
+            value={pin}
+            onChange={handlePinChange}
+            onKeyDown={handleKeyDown}
+            maxLength={12}
+            className="w-full pl-11 pr-12 py-3 bg-bg-card cartoon-input
+              text-text-main placeholder-text-muted focus:outline-none
+              text-sm font-semibold"
+          />
+          {showEye && (
+            <button
+              type="button"
+              onClick={() => setPinVisible(!pinVisible)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted
+                hover:text-red-main transition-colors duration-200 animate-eye-appear"
+              tabIndex={-1}
+            >
+              {pinVisible ? <EyeOpenIcon /> : <EyeClosedIcon />}
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 text-red-soft text-sm font-bold animate-wobble">
+            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 8v4M12 16h.01" strokeLinecap="round" />
+            </svg>
+            {error}
+          </div>
+        )}
         <button
           onClick={handleJoin}
           disabled={loading}
-          className="w-full py-3 bg-red-main text-white font-semibold rounded-xl
-            glow-red-sm hover:glow-red transition-all duration-300
-            hover:bg-red-soft active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full py-3 bg-red-main text-white font-extrabold rounded-2xl
+            cartoon-btn hover:bg-red-soft disabled:opacity-50 disabled:cursor-not-allowed
+            disabled:transform-none text-sm"
         >
-          {loading ? 'Katılıyor...' : 'Katıl'}
+          {loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Katılıyor...
+            </span>
+          ) : (
+            'Katıl! 🎬'
+          )}
         </button>
       </div>
     </Modal>

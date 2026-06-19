@@ -11,6 +11,38 @@ import VideoInputBar from '../components/VideoInputBar';
 import UserList from '../components/UserList';
 import ShareRoomLink from '../components/ShareRoomLink';
 
+/* ── Inline SVG Icons ── */
+const UserIcon = () => (
+  <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="8" r="4" />
+    <path d="M5 20c0-3.87 3.13-7 7-7s7 3.13 7 7" />
+  </svg>
+);
+
+const LockIcon = () => (
+  <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="5" y="11" width="14" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 018 0v4" />
+    <circle cx="12" cy="16" r="1.5" fill="currentColor" />
+  </svg>
+);
+
+const EyeOpenIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+const EyeClosedIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
+    <path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
+    <path d="M14.12 14.12a3 3 0 11-4.24-4.24" />
+    <line x1="1" y1="1" x2="23" y2="23" />
+  </svg>
+);
+
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
@@ -25,6 +57,20 @@ export default function RoomPage() {
   const [joining, setJoining] = useState(false);
   const [joined, setJoined] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true); // new: session check loading
+  const [pinVisible, setPinVisible] = useState(true);
+  const [showEye, setShowEye] = useState(false);
+
+  const handlePinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setPin(val);
+    if (val.length === 1 && !showEye) {
+      setShowEye(true);
+    }
+    if (val.length === 0) {
+      setShowEye(false);
+      setPinVisible(true);
+    }
+  };
 
   // --- Auto-rejoin: check localStorage session on mount ---
   useEffect(() => {
@@ -199,7 +245,7 @@ export default function RoomPage() {
     };
 
     const handleUserJoined = (data: { user: RoomUser }) => {
-      addToast(`${data.user.displayName} odaya katıldı.`);
+      addToast(`${data.user.displayName} odaya katıldı 👋`);
     };
 
     const handleUserLeft = (data: { userId: string }) => {
@@ -229,7 +275,7 @@ export default function RoomPage() {
 
     const handleDisconnect = () => {
       if (joined) {
-        addToast('Sunucu bağlantısı kesildi. Yeniden bağlanılıyor...', 'warning');
+        addToast('Bağlantı kesildi, yeniden bağlanılıyor... ⚡', 'warning');
       }
     };
 
@@ -267,11 +313,11 @@ export default function RoomPage() {
 
   const handleJoin = () => {
     if (!displayName.trim()) {
-      setJoinError('Görünen adınızı girin.');
+      setJoinError('Takma adını gir.');
       return;
     }
     if (!pin.trim()) {
-      setJoinError('PIN girin.');
+      setJoinError('PIN gir.');
       return;
     }
     setJoining(true);
@@ -291,9 +337,9 @@ export default function RoomPage() {
   if (checkingSession) {
     return (
       <div className="min-h-screen bg-bg-main flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-red-main border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-text-muted text-sm">Oturum kontrol ediliyor...</p>
+        <div className="text-center animate-pop-in">
+          <div className="w-10 h-10 border-[3px] border-red-main border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-text-muted text-sm font-bold">Oturum kontrol ediliyor...</p>
         </div>
       </div>
     );
@@ -303,57 +349,100 @@ export default function RoomPage() {
   if (pinStep) {
     return (
       <div className="min-h-screen bg-bg-main flex items-center justify-center p-4">
-        <div className="w-full max-w-sm bg-bg-panel border border-white/10 rounded-2xl p-6 animate-fade-in">
+        <div className="w-full max-w-sm bg-bg-panel border-[3px] border-white/10 rounded-3xl p-6 animate-pop-in shadow-cartoon-card">
           <div className="text-center mb-6">
-            <div className="w-14 h-14 rounded-2xl bg-red-main/20 flex items-center justify-center mx-auto mb-3">
-              <svg className="w-8 h-8 text-red-main" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M10 15l5.19-3L10 9v6m11.56-7.83c.13.47.22 1.1.28 1.9.07.8.1 1.49.1 2.09L22 12c0 2.19-.16 3.8-.44 4.83-.25.9-.83 1.48-1.73 1.73-.47.13-1.33.22-2.65.28-1.3.07-2.49.1-3.59.1L12 19c-4.19 0-6.8-.16-7.83-.44-.9-.25-1.48-.83-1.73-1.73-.13-.47-.22-1.1-.28-1.9-.07-.8-.1-1.49-.1-2.09L2 12c0-2.19.16-3.8.44-4.83.25-.9.83-1.48 1.73-1.73.47-.13 1.33-.22 2.65-.28 1.3-.07 2.49-.1 3.59-.1L12 5c4.19 0 6.8.16 7.83.44.9.25 1.48.83 1.73 1.73z" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-text-main">Odaya Katıl</h2>
-            <p className="text-text-muted text-sm mt-1">Görünen adını ve PIN'i gir</p>
+            <img
+              src="/ytogether_logo.png"
+              alt="You Together"
+              className="w-16 h-16 mx-auto rounded-2xl object-contain mb-3 animate-float
+                drop-shadow-[0_0_16px_rgba(255,0,51,0.3)]"
+            />
+            <h2 className="text-xl font-extrabold text-text-main">Odaya Katıl 🚪</h2>
+            <p className="text-text-muted text-sm mt-1 font-semibold">Takma adını ve PIN'i gir</p>
           </div>
 
           <div className="space-y-3">
-            <input
-              type="text"
-              placeholder="Görünen adın"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              onKeyDown={handleKeyDown}
-              maxLength={24}
-              className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-                text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-                transition-colors"
-              autoFocus
-            />
-            <input
-              type="text"
-              placeholder="PIN"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              onKeyDown={handleKeyDown}
-              maxLength={12}
-              className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-                text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-                transition-colors"
-            />
+            {/* Display Name */}
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                <UserIcon />
+              </div>
+              <input
+                type="text"
+                placeholder="Takma adın"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                onKeyDown={handleKeyDown}
+                maxLength={24}
+                className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
+                  text-text-main placeholder-text-muted focus:outline-none
+                  text-sm font-semibold"
+                autoFocus
+              />
+            </div>
+
+            {/* PIN */}
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                <LockIcon />
+              </div>
+              <input
+                type={pinVisible ? 'text' : 'password'}
+                placeholder="PIN"
+                value={pin}
+                onChange={handlePinChange}
+                onKeyDown={handleKeyDown}
+                maxLength={12}
+                className="w-full pl-11 pr-12 py-3 bg-bg-card cartoon-input
+                  text-text-main placeholder-text-muted focus:outline-none
+                  text-sm font-semibold"
+              />
+              {showEye && (
+                <button
+                  type="button"
+                  onClick={() => setPinVisible(!pinVisible)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted
+                    hover:text-red-main transition-colors duration-200 animate-eye-appear"
+                  tabIndex={-1}
+                >
+                  {pinVisible ? <EyeOpenIcon /> : <EyeClosedIcon />}
+                </button>
+              )}
+            </div>
+
             {joinError && (
-              <p className="text-red-soft text-sm">{joinError}</p>
+              <div className="flex items-center gap-2 text-red-soft text-sm font-bold animate-wobble">
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 8v4M12 16h.01" strokeLinecap="round" />
+                </svg>
+                {joinError}
+              </div>
             )}
             <button
               onClick={handleJoin}
               disabled={joining}
-              className="w-full py-3 bg-red-main text-white font-semibold rounded-xl
-                glow-red-sm hover:glow-red transition-all duration-300
-                hover:bg-red-soft active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-3 bg-red-main text-white font-extrabold rounded-2xl
+                cartoon-btn hover:bg-red-soft disabled:opacity-50 disabled:cursor-not-allowed
+                disabled:transform-none text-sm"
             >
-              {joining ? 'Katılıyor...' : 'Katıl'}
+              {joining ? (
+                <span className="flex items-center justify-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Katılıyor...
+                </span>
+              ) : (
+                'Katıl! 🎬'
+              )}
             </button>
             <button
               onClick={() => navigate('/')}
-              className="w-full py-2 text-text-muted hover:text-text-main text-sm transition-colors"
+              className="w-full py-2 text-text-muted hover:text-red-main text-sm font-bold transition-all duration-200
+                hover:translate-x-[-2px] flex items-center justify-center gap-1"
             >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
               Ana Sayfaya Dön
             </button>
           </div>
@@ -366,7 +455,7 @@ export default function RoomPage() {
   if (!room || !joined) {
     return (
       <div className="min-h-screen bg-bg-main flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-red-main border-t-transparent rounded-full animate-spin" />
+        <div className="w-10 h-10 border-[3px] border-red-main border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -374,7 +463,7 @@ export default function RoomPage() {
   return (
     <div className="min-h-screen bg-bg-main">
       {/* Top Bar */}
-      <header className="border-b border-white/5 bg-bg-panel/50 backdrop-blur-sm sticky top-0 z-30">
+      <header className="border-b-[3px] border-white/5 bg-bg-panel/60 backdrop-blur-md sticky top-0 z-30">
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
             <button
@@ -383,14 +472,21 @@ export default function RoomPage() {
                 reset();
                 navigate('/');
               }}
-              className="text-text-muted hover:text-text-main transition-colors shrink-0"
+              className="w-8 h-8 rounded-xl bg-bg-card border-2 border-white/10 flex items-center justify-center
+                text-text-muted hover:text-red-main hover:border-red-main/30
+                transition-all duration-200 shrink-0"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
             </button>
-            <h2 className="text-lg font-bold text-text-main truncate">{room.name}</h2>
-            <span className="text-xs bg-bg-card text-text-muted px-2 py-1 rounded-lg border border-white/5">
+            <img
+              src="/ytogether_logo.png"
+              alt="You Together"
+              className="w-8 h-8 rounded-lg object-contain shrink-0 hidden sm:block"
+            />
+            <h2 className="text-lg font-extrabold text-text-main truncate">{room.name}</h2>
+            <span className="text-xs bg-bg-card text-text-muted px-2.5 py-1 rounded-xl border-2 border-white/5 font-bold shrink-0">
               {room.userCount}/{room.maxUsers}
             </span>
           </div>
@@ -409,15 +505,15 @@ export default function RoomPage() {
             <VideoInputBar />
 
             {/* Player */}
-            <div className="relative bg-black rounded-2xl overflow-hidden border border-white/5 aspect-video">
+            <div className="relative bg-black rounded-3xl overflow-hidden border-[3px] border-white/5 aspect-video shadow-cartoon-card">
               <YouTubePlayer videoId={room.playback.videoId} />
               {!room.playback.videoId && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-                  <div className="text-center">
-                    <div className="text-5xl mb-4">🎥</div>
-                    <p className="text-text-muted text-lg">Henüz video eklenmedi.</p>
-                    <p className="text-text-muted/60 text-sm mt-1">
-                      Admin bir YouTube linki yapıştırdığında video burada görünecek.
+                  <div className="text-center animate-bounce-in">
+                    <div className="text-6xl mb-4 animate-float">🎥</div>
+                    <p className="text-text-muted text-lg font-bold">Henüz video eklenmedi</p>
+                    <p className="text-text-muted/60 text-sm mt-1 font-semibold">
+                      Admin bir YouTube linki eklediğinde video burada görünecek.
                     </p>
                   </div>
                 </div>

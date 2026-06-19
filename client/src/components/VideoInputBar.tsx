@@ -48,25 +48,31 @@ export default function VideoInputBar() {
 
   return (
     <div className="mb-3 flex gap-2">
-      <input
-        type="text"
-        placeholder="YouTube linki yapıştırın"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        onKeyDown={handleKeyDown}
-        className="flex-1 px-4 py-2.5 bg-bg-card border border-white/10 rounded-xl
-          text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-          transition-colors text-sm"
-      />
+      <div className="relative flex-1">
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+          <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M10 15l5.19-3L10 9v6m11.56-7.83c.13.47.22 1.1.28 1.9.07.8.1 1.49.1 2.09L22 12c0 2.19-.16 3.8-.44 4.83-.25.9-.83 1.48-1.73 1.73-.47.13-1.33.22-2.65.28-1.3.07-2.49.1-3.59.1L12 19c-4.19 0-6.8-.16-7.83-.44-.9-.25-1.48-.83-1.73-1.73-.13-.47-.22-1.1-.28-1.9-.07-.8-.1-1.49-.1-2.09L2 12c0-2.19.16-3.8.44-4.83.25-.9.83-1.48 1.73-1.73.47-.13 1.33-.22 2.65-.28 1.3-.07 2.49-.1 3.59-.1L12 5c4.19 0 6.8.16 7.83.44.9.25 1.48.83 1.73 1.73z" />
+          </svg>
+        </div>
+        <input
+          type="text"
+          placeholder="YouTube linkini yapıştır"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={handleKeyDown}
+          className="w-full pl-11 pr-4 py-2.5 bg-bg-card cartoon-input
+            text-text-main placeholder-text-muted focus:outline-none
+            text-sm font-semibold"
+        />
+      </div>
       <button
         onClick={handleSubmit}
         disabled={loading || !url.trim()}
-        className="px-4 py-2.5 bg-red-main text-white font-semibold rounded-xl
-          glow-red-sm hover:glow-red transition-all duration-300
-          hover:bg-red-soft active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed
-          text-sm whitespace-nowrap"
+        className="px-5 py-2.5 bg-red-main text-white font-extrabold rounded-2xl
+          cartoon-btn-sm hover:bg-red-soft disabled:opacity-50 disabled:cursor-not-allowed
+          disabled:transform-none text-sm whitespace-nowrap"
       >
-        {loading ? '...' : 'Videoyu değiştir'}
+        {loading ? '...' : '🎬 Değiştir'}
       </button>
     </div>
   );

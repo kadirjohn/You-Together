@@ -5,6 +5,46 @@ import { useUIStore } from '../stores/ui.store';
 import { saveSession } from '../lib/session';
 import Modal from './ui/Modal';
 
+/* ── Inline SVG Icons (cartoonish, thick stroke) ── */
+const RoomIcon = () => (
+  <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 9.5L12 4l9 5.5" />
+    <path d="M19 13v6a1 1 0 01-1 1H6a1 1 0 01-1-1v-6" />
+    <rect x="9" y="14" width="6" height="6" rx="1" />
+  </svg>
+);
+
+const UserIcon = () => (
+  <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="8" r="4" />
+    <path d="M5 20c0-3.87 3.13-7 7-7s7 3.13 7 7" />
+  </svg>
+);
+
+const LockIcon = () => (
+  <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="5" y="11" width="14" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 018 0v4" />
+    <circle cx="12" cy="16" r="1.5" fill="currentColor" />
+  </svg>
+);
+
+const EyeOpenIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+const EyeClosedIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
+    <path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
+    <path d="M14.12 14.12a3 3 0 11-4.24-4.24" />
+    <line x1="1" y1="1" x2="23" y2="23" />
+  </svg>
+);
+
 export default function CreateRoomModal() {
   const navigate = useNavigate();
   const { setShowCreateModal, addToast } = useUIStore();
@@ -16,6 +56,8 @@ export default function CreateRoomModal() {
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pinVisible, setPinVisible] = useState(true);
+  const [showEye, setShowEye] = useState(false);
 
   const handleContinue = () => {
     setError('');
@@ -25,6 +67,18 @@ export default function CreateRoomModal() {
   const handleBack = () => {
     setError('');
     setStep('url');
+  };
+
+  const handlePinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setPin(val);
+    if (val.length === 1 && !showEye) {
+      setShowEye(true);
+    }
+    if (val.length === 0) {
+      setShowEye(false);
+      setPinVisible(true);
+    }
   };
 
   const handleCreate = () => {
@@ -63,7 +117,7 @@ export default function CreateRoomModal() {
       }
 
       navigate(`/room/${data.roomId}`);
-      addToast('Oda oluşturuldu!', 'success');
+      addToast('Oda oluşturuldu! 🎉', 'success');
     };
 
     const errorHandler = (data: { message: string }) => {
@@ -87,7 +141,7 @@ export default function CreateRoomModal() {
       socket.off('room:created', handler);
       socket.off('room:error', errorHandler);
       setLoading(false);
-      setError('Sunucu yanıt vermedi. Lütfen tekrar deneyin.');
+      setError('Sunucu yanıt vermedi. Lütfen tekrar dene.');
     }, 10000);
   };
 
@@ -98,37 +152,43 @@ export default function CreateRoomModal() {
     }
   };
 
-  const title = step === 'url' ? 'Yeni Oda — Video Seç' : 'Yeni Oda — Detaylar';
+  const title = step === 'url' ? '🎬 Video Seç' : '📝 Oda Bilgileri';
 
   return (
     <Modal open={true} onClose={() => setShowCreateModal(false)} title={title}>
       {step === 'url' ? (
         /* ── Step 1: YouTube link ── */
         <div className="space-y-4">
-          <p className="text-text-muted text-sm">
-            Beraber izlemek istediğin YouTube videosunun linkini yapıştır.
+          <p className="text-text-muted text-sm font-semibold">
+            İzlemek istediğin YouTube linkini buraya yapıştır!
             <br />
-            <span className="text-text-muted/50">İstersen boş bırakıp sonra da ekleyebilirsin.</span>
+            <span className="text-text-muted/50 font-normal">Şimdilik geçebilirsin, sonra da eklersin 😉</span>
           </p>
-          <input
-            type="text"
-            placeholder="https://youtube.com/watch?v=..."
-            value={youtubeUrl}
-            onChange={(e) => setYoutubeUrl(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-              text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-              transition-colors text-sm"
-            autoFocus
-          />
+          <div className="relative">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+              <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M10 15l5.19-3L10 9v6m11.56-7.83c.13.47.22 1.1.28 1.9.07.8.1 1.49.1 2.09L22 12c0 2.19-.16 3.8-.44 4.83-.25.9-.83 1.48-1.73 1.73-.47.13-1.33.22-2.65.28-1.3.07-2.49.1-3.59.1L12 19c-4.19 0-6.8-.16-7.83-.44-.9-.25-1.48-.83-1.73-1.73-.13-.47-.22-1.1-.28-1.9-.07-.8-.1-1.49-.1-2.09L2 12c0-2.19.16-3.8.44-4.83.25-.9.83-1.48 1.73-1.73.47-.13 1.33-.22 2.65-.28 1.3-.07 2.49-.1 3.59-.1L12 5c4.19 0 6.8.16 7.83.44.9.25 1.48.83 1.73 1.73z" />
+              </svg>
+            </div>
+            <input
+              type="text"
+              placeholder="https://youtube.com/watch?v=..."
+              value={youtubeUrl}
+              onChange={(e) => setYoutubeUrl(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
+                text-text-main placeholder-text-muted focus:outline-none
+                text-sm font-semibold"
+              autoFocus
+            />
+          </div>
           <div className="flex gap-2">
             <button
               onClick={handleContinue}
-              className="flex-1 py-3 bg-red-main text-white font-semibold rounded-xl
-                glow-red-sm hover:glow-red transition-all duration-300
-                hover:bg-red-soft active:scale-[0.98]"
+              className="flex-1 py-3 bg-red-main text-white font-extrabold rounded-2xl
+                cartoon-btn hover:bg-red-soft text-sm"
             >
-              {youtubeUrl.trim() ? 'Devam Et' : 'Atla ve Devam Et'}
+              {youtubeUrl.trim() ? 'Devam Et →' : 'Sonra eklerim →'}
             </button>
           </div>
         </div>
@@ -138,82 +198,127 @@ export default function CreateRoomModal() {
           {/* Back button */}
           <button
             onClick={handleBack}
-            className="text-text-muted hover:text-text-main text-sm transition-colors flex items-center gap-1"
+            className="text-text-muted hover:text-red-main text-sm font-bold transition-all duration-200 flex items-center gap-1
+              hover:translate-x-[-2px]"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            Video linkini değiştir
+            Videoyu değiştir
           </button>
 
           {/* YouTube URL summary */}
           {youtubeUrl.trim() && (
-            <div className="px-3 py-2 bg-bg-card border border-white/5 rounded-lg text-xs text-text-muted truncate">
+            <div className="px-3 py-2 bg-bg-card border-2 border-white/5 rounded-xl text-xs text-text-muted truncate font-semibold">
               🎥 {youtubeUrl}
             </div>
           )}
 
+          {/* Room Name */}
           <div>
-            <label className="block text-text-muted text-xs font-medium mb-1.5 uppercase tracking-wide">
+            <label className="block text-text-muted text-xs font-bold mb-1.5 uppercase tracking-wider">
               Oda Adı
             </label>
-            <input
-              type="text"
-              placeholder="Film Gecesi, Müzik Partisi..."
-              value={roomName}
-              onChange={(e) => setRoomName(e.target.value)}
-              onKeyDown={handleKeyDown}
-              maxLength={60}
-              className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-                text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-                transition-colors text-sm"
-              autoFocus
-            />
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                <RoomIcon />
+              </div>
+              <input
+                type="text"
+                placeholder="Film gecesi, chill takılma..."
+                value={roomName}
+                onChange={(e) => setRoomName(e.target.value)}
+                onKeyDown={handleKeyDown}
+                maxLength={60}
+                className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
+                  text-text-main placeholder-text-muted focus:outline-none
+                  text-sm font-semibold"
+                autoFocus
+              />
+            </div>
           </div>
 
+          {/* PIN */}
           <div>
-            <label className="block text-text-muted text-xs font-medium mb-1.5 uppercase tracking-wide">
+            <label className="block text-text-muted text-xs font-bold mb-1.5 uppercase tracking-wider">
               PIN
             </label>
-            <input
-              type="text"
-              placeholder="En az 4 karakter"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              onKeyDown={handleKeyDown}
-              maxLength={12}
-              className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-                text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-                transition-colors text-sm"
-            />
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                <LockIcon />
+              </div>
+              <input
+                type={pinVisible ? 'text' : 'password'}
+                placeholder="En az 4 karakter"
+                value={pin}
+                onChange={handlePinChange}
+                onKeyDown={handleKeyDown}
+                maxLength={12}
+                className="w-full pl-11 pr-12 py-3 bg-bg-card cartoon-input
+                  text-text-main placeholder-text-muted focus:outline-none
+                  text-sm font-semibold"
+              />
+              {showEye && (
+                <button
+                  type="button"
+                  onClick={() => setPinVisible(!pinVisible)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted
+                    hover:text-red-main transition-colors duration-200 animate-eye-appear"
+                  tabIndex={-1}
+                >
+                  {pinVisible ? <EyeOpenIcon /> : <EyeClosedIcon />}
+                </button>
+              )}
+            </div>
           </div>
 
+          {/* Display Name */}
           <div>
-            <label className="block text-text-muted text-xs font-medium mb-1.5 uppercase tracking-wide">
-              Görünen Adın
+            <label className="block text-text-muted text-xs font-bold mb-1.5 uppercase tracking-wider">
+              Takma Adın
             </label>
-            <input
-              type="text"
-              placeholder="Herkesin göreceği isim"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              onKeyDown={handleKeyDown}
-              maxLength={24}
-              className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-                text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-                transition-colors text-sm"
-            />
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                <UserIcon />
+              </div>
+              <input
+                type="text"
+                placeholder="Odadaki herkes bu adı görecek"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                onKeyDown={handleKeyDown}
+                maxLength={24}
+                className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
+                  text-text-main placeholder-text-muted focus:outline-none
+                  text-sm font-semibold"
+              />
+            </div>
           </div>
 
-          {error && <p className="text-red-soft text-sm">{error}</p>}
+          {error && (
+            <div className="flex items-center gap-2 text-red-soft text-sm font-bold animate-wobble">
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 8v4M12 16h.01" strokeLinecap="round" />
+              </svg>
+              {error}
+            </div>
+          )}
           <button
             onClick={handleCreate}
             disabled={loading}
-            className="w-full py-3 bg-red-main text-white font-semibold rounded-xl
-              glow-red-sm hover:glow-red transition-all duration-300
-              hover:bg-red-soft active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full py-3 bg-red-main text-white font-extrabold rounded-2xl
+              cartoon-btn hover:bg-red-soft disabled:opacity-50 disabled:cursor-not-allowed
+              disabled:transform-none text-sm"
           >
-            {loading ? 'Oluşturuluyor...' : 'Oda Oluştur'}
+            {loading ? (
+              <span className="flex items-center justify-center gap-2">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Oluşturuluyor...
+              </span>
+            ) : (
+              'Odayı Kur! 🚀'
+            )}
           </button>
         </div>
       )}
