@@ -159,13 +159,13 @@ export default function CreateRoomModal() {
       {step === 'url' ? (
         /* ── Step 1: YouTube link ── */
         <div className="space-y-4">
-          <p className="text-text-muted text-sm font-semibold">
+          <p className="text-text-muted text-base font-bold">
             İzlemek istediğin YouTube linkini buraya yapıştır!
             <br />
-            <span className="text-text-muted/50 font-normal">Sonra da eklenebilir.</span>
+            <span className="text-text-muted/50 text-sm font-semibold">Video linki sonra da eklenebilir</span>
           </p>
           <div className="relative input-icon-group">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon z-10">
               <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M10 15l5.19-3L10 9v6m11.56-7.83c.13.47.22 1.1.28 1.9.07.8.1 1.49.1 2.09L22 12c0 2.19-.16 3.8-.44 4.83-.25.9-.83 1.48-1.73 1.73-.47.13-1.33.22-2.65.28-1.3.07-2.49.1-3.59.1L12 19c-4.19 0-6.8-.16-7.83-.44-.9-.25-1.48-.83-1.73-1.73-.13-.47-.22-1.1-.28-1.9-.07-.8-.1-1.49-.1-2.09L2 12c0-2.19.16-3.8.44-4.83.25-.9.83-1.48 1.73-1.73.47-.13 1.33-.22 2.65-.28 1.3-.07 2.49-.1 3.59-.1L12 5c4.19 0 6.8.16 7.83.44.9.25 1.48.83 1.73 1.73z" />
               </svg>
@@ -178,7 +178,7 @@ export default function CreateRoomModal() {
               onKeyDown={handleKeyDown}
               className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
                 text-text-main placeholder-text-muted focus:outline-none
-                text-sm font-semibold"
+                text-base font-semibold"
               autoFocus
             />
           </div>
@@ -186,7 +186,7 @@ export default function CreateRoomModal() {
             <button
               onClick={handleContinue}
               className="flex-1 py-3 bg-red-main text-white font-extrabold rounded-2xl
-                cartoon-btn hover:bg-red-soft text-sm"
+                cartoon-btn hover:bg-red-soft text-base"
             >
               {youtubeUrl.trim() ? 'Devam Et →' : 'Linki sonra ekle →'}
             </button>
@@ -194,14 +194,14 @@ export default function CreateRoomModal() {
         </div>
       ) : (
         /* ── Step 2: Room details ── */
-        <div className="space-y-3">
+        <div className="space-y-4">
           {/* Back button */}
           <button
             onClick={handleBack}
-            className="text-text-muted hover:text-red-main text-sm font-bold transition-all duration-200 flex items-center gap-1
-              hover:translate-x-[-2px]"
+            className="text-text-muted hover:text-red-main text-lg font-extrabold transition-all duration-200 flex items-center gap-1.5
+              hover:translate-x-[-2px] whitespace-nowrap"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
             Videoyu değiştir
@@ -209,18 +209,18 @@ export default function CreateRoomModal() {
 
           {/* YouTube URL summary */}
           {youtubeUrl.trim() && (
-            <div className="px-3 py-2 bg-bg-card border-2 border-white/5 rounded-xl text-xs text-text-muted truncate font-semibold">
+            <div className="px-3.5 py-2.5 bg-bg-card border-2 border-white/5 rounded-xl text-sm text-text-muted truncate font-semibold">
               🎥 {youtubeUrl}
             </div>
           )}
 
           {/* Room Name */}
           <div>
-            <label className="block text-text-muted text-xs font-bold mb-1.5 uppercase tracking-wider">
+            <label className="block text-text-muted text-sm font-black mb-1.5 uppercase tracking-wider">
               Oda Adı
             </label>
             <div className="relative input-icon-group">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon z-10">
                 <RoomIcon />
               </div>
               <input
@@ -232,7 +232,7 @@ export default function CreateRoomModal() {
                 maxLength={60}
                 className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
                   text-text-main placeholder-text-muted focus:outline-none
-                  text-sm font-semibold"
+                  text-base font-semibold"
                 autoFocus
               />
             </div>
@@ -240,11 +240,11 @@ export default function CreateRoomModal() {
 
           {/* PIN */}
           <div>
-            <label className="block text-text-muted text-xs font-bold mb-1.5 uppercase tracking-wider">
+            <label className="block text-text-muted text-sm font-black mb-1.5 uppercase tracking-wider">
               PIN
             </label>
             <div className="relative input-icon-group">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon z-10">
                 <LockIcon />
               </div>
               <input
@@ -256,7 +256,7 @@ export default function CreateRoomModal() {
                 maxLength={12}
                 className="w-full pl-11 pr-12 py-3 bg-bg-card cartoon-input
                   text-text-main placeholder-text-muted focus:outline-none
-                  text-sm font-semibold"
+                  text-base font-semibold"
               />
               {showEye && (
                 <button
@@ -274,11 +274,11 @@ export default function CreateRoomModal() {
 
           {/* Display Name */}
           <div>
-            <label className="block text-text-muted text-xs font-bold mb-1.5 uppercase tracking-wider">
+            <label className="block text-text-muted text-sm font-black mb-1.5 uppercase tracking-wider">
               Takma Adın
             </label>
             <div className="relative input-icon-group">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon z-10">
                 <UserIcon />
               </div>
               <input
@@ -290,14 +290,14 @@ export default function CreateRoomModal() {
                 maxLength={24}
                 className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
                   text-text-main placeholder-text-muted focus:outline-none
-                  text-sm font-semibold"
+                  text-base font-semibold"
               />
             </div>
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 text-red-soft text-sm font-bold animate-wobble">
-              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+            <div className="flex items-center gap-2 text-red-soft text-base font-bold animate-wobble">
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
                 <circle cx="12" cy="12" r="10" />
                 <path d="M12 8v4M12 16h.01" strokeLinecap="round" />
               </svg>
@@ -309,7 +309,7 @@ export default function CreateRoomModal() {
             disabled={loading}
             className="w-full py-3 bg-red-main text-white font-extrabold rounded-2xl
               cartoon-btn hover:bg-red-soft disabled:opacity-50 disabled:cursor-not-allowed
-              disabled:transform-none text-sm"
+              disabled:transform-none text-base"
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">

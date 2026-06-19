@@ -109,10 +109,8 @@ export default function HomePage() {
               cartoon-btn hover:bg-bg-panel text-base flex items-center gap-2"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21.5 2v6h-6" />
-              <path d="M2.5 22v-6h6" />
-              <path d="M21.34 8A10 10 0 003.34 16" />
-              <path d="M2.66 16A10 10 0 0020.66 8" />
+              <path d="M23 4v6h-6" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
             </svg>
             Yenile
           </button>

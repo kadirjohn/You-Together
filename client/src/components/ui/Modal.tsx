@@ -20,7 +20,7 @@ export default function Modal({ open, onClose, title, children }: ModalProps) {
       {/* Panel */}
       <div className="relative bg-bg-panel border-[3px] border-white/10 rounded-3xl p-6 w-full max-w-md shadow-cartoon-card animate-pop-in">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="text-lg font-extrabold text-text-main tracking-tight">{title}</h3>
+          <h3 className="text-3xl font-black text-text-main tracking-tight">{title}</h3>
           <button
             onClick={onClose}
             className="w-8 h-8 rounded-xl bg-bg-card border-2 border-white/10 flex items-center justify-center

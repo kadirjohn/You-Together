@@ -357,14 +357,14 @@ export default function RoomPage() {
               className="w-16 h-16 mx-auto rounded-2xl object-contain mb-3 animate-float
                 drop-shadow-[0_0_16px_rgba(255,0,51,0.3)]"
             />
-            <h2 className="text-xl font-extrabold text-text-main">Odaya Katıl</h2>
-            <p className="text-text-muted text-sm mt-1 font-semibold">Takma adını ve PIN'i gir</p>
+            <h2 className="text-3xl font-black text-text-main">Odaya Katıl</h2>
+            <p className="text-text-muted text-base mt-2 font-bold">Takma adını ve PIN'i gir</p>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-4">
             {/* Display Name */}
             <div className="relative input-icon-group">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon z-10">
                 <UserIcon />
               </div>
               <input
@@ -376,14 +376,14 @@ export default function RoomPage() {
                 maxLength={24}
                 className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
                   text-text-main placeholder-text-muted focus:outline-none
-                  text-sm font-semibold"
+                  text-base font-semibold"
                 autoFocus
               />
             </div>
 
             {/* PIN */}
             <div className="relative input-icon-group">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon z-10">
                 <LockIcon />
               </div>
               <input
@@ -395,7 +395,7 @@ export default function RoomPage() {
                 maxLength={12}
                 className="w-full pl-11 pr-12 py-3 bg-bg-card cartoon-input
                   text-text-main placeholder-text-muted focus:outline-none
-                  text-sm font-semibold"
+                  text-base font-semibold"
               />
               {showEye && (
                 <button
@@ -411,8 +411,8 @@ export default function RoomPage() {
             </div>
 
             {joinError && (
-              <div className="flex items-center gap-2 text-red-soft text-sm font-bold animate-wobble">
-                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <div className="flex items-center gap-2 text-red-soft text-base font-bold animate-wobble">
+                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 8v4M12 16h.01" strokeLinecap="round" />
                 </svg>
@@ -424,7 +424,7 @@ export default function RoomPage() {
               disabled={joining}
               className="w-full py-3 bg-red-main text-white font-extrabold rounded-2xl
                 cartoon-btn hover:bg-red-soft disabled:opacity-50 disabled:cursor-not-allowed
-                disabled:transform-none text-sm"
+                disabled:transform-none text-base"
             >
               {joining ? (
                 <span className="flex items-center justify-center gap-2">
@@ -437,10 +437,10 @@ export default function RoomPage() {
             </button>
             <button
               onClick={() => navigate('/')}
-              className="w-full py-2 text-text-muted hover:text-red-main text-sm font-bold transition-all duration-200
-                hover:translate-x-[-2px] flex items-center justify-center gap-1"
+              className="w-full py-2 text-text-muted hover:text-red-main text-lg font-bold transition-all duration-200
+                hover:translate-x-[-2px] flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
               Ana Sayfaya Dön

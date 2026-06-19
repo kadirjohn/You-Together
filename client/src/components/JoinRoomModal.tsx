@@ -126,10 +126,10 @@ export default function JoinRoomModal() {
 
   return (
     <Modal open={true} onClose={closeJoinModal} title="Odaya Katıl">
-      <div className="space-y-3">
+      <div className="space-y-4">
         {/* Display Name */}
         <div className="relative input-icon-group">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon z-10">
             <UserIcon />
           </div>
           <input
@@ -141,14 +141,14 @@ export default function JoinRoomModal() {
             maxLength={24}
             className="w-full pl-11 pr-4 py-3 bg-bg-card cartoon-input
               text-text-main placeholder-text-muted focus:outline-none
-              text-sm font-semibold"
+              text-base font-semibold"
             autoFocus
           />
         </div>
 
         {/* PIN */}
         <div className="relative input-icon-group">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon z-10">
             <LockIcon />
           </div>
           <input
@@ -160,7 +160,7 @@ export default function JoinRoomModal() {
             maxLength={12}
             className="w-full pl-11 pr-12 py-3 bg-bg-card cartoon-input
               text-text-main placeholder-text-muted focus:outline-none
-              text-sm font-semibold"
+              text-base font-semibold"
           />
           {showEye && (
             <button
@@ -176,8 +176,8 @@ export default function JoinRoomModal() {
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 text-red-soft text-sm font-bold animate-wobble">
-            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+          <div className="flex items-center gap-2 text-red-soft text-base font-bold animate-wobble">
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
               <circle cx="12" cy="12" r="10" />
               <path d="M12 8v4M12 16h.01" strokeLinecap="round" />
             </svg>
@@ -189,7 +189,7 @@ export default function JoinRoomModal() {
           disabled={loading}
           className="w-full py-3 bg-red-main text-white font-extrabold rounded-2xl
             cartoon-btn hover:bg-red-soft disabled:opacity-50 disabled:cursor-not-allowed
-            disabled:transform-none text-sm"
+            disabled:transform-none text-base"
         >
           {loading ? (
             <span className="flex items-center justify-center gap-2">
