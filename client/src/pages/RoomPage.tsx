@@ -156,6 +156,7 @@ export default function RoomPage() {
         baseTime: data.baseTime,
         baseServerTime: data.baseServerTime,
         version: data.version,
+        updatedBy: data.updatedBy,
       });
       useRoomStore.getState().setLastRemoteVersion(data.version);
     };
@@ -176,6 +177,7 @@ export default function RoomPage() {
         baseTime: data.state.baseTime,
         baseServerTime: data.state.baseServerTime,
         version: data.state.version,
+        updatedBy: (data.state as any).updatedBy ?? null,
       });
     };
 

@@ -155,7 +155,7 @@ export function registerAdminHandlers(socket: Socket) {
 
     const playback: RoomPlaybackState = {
       videoId,
-      status: PlaybackStatus.Paused,
+      status: PlaybackStatus.Playing,
       baseTime: 0,
       baseServerTime: now(),
       version: 1,

@@ -312,7 +312,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       playerState.current.currentTime = expectedTime; playerState.current.lastTimeUpdate = Date.now();
       lastLocalTime.current = expectedTime; lastCheckTime.current = Date.now();
       const toast = addToastRef.current;
-      if (toast) toast('Oda zamanına senkronize edildin.', 'info');
+      if (toast) toast('En son kaldığın yerden devam ediliyor.', 'info');
       setTimeout(() => { applyingRemoteUpdate.current = false; isRemoteSyncing.current = false; }, 1500);
     }, 1000);
     return () => clearInterval(interval);

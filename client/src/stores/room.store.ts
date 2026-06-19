@@ -31,6 +31,7 @@ interface RoomStore {
     baseTime?: number;
     baseServerTime?: number;
     version?: number;
+    updatedBy?: string | null;
   }) => void;
   reset: () => void;
 }
