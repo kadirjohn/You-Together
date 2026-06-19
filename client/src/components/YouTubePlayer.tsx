@@ -38,6 +38,9 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   const [playerReady, setPlayerReady] = useState(false);
   const [userManuallySeeked, setUserManuallySeeked] = useState(false);
   const [needsUserInteraction, setNeedsUserInteraction] = useState(false); // autoplay blocked
+  // UI state — React state for rendering (refs are for logic, state for UI reactivity)
+  const [uiPlaying, setUiPlaying] = useState(false);
+  const [uiTime, setUiTime] = useState(0);
 
   // Player state tracking (all via refs for permanent listener access)
   const playerState = useRef({
@@ -61,7 +64,8 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   const embedUrl = useMemo(() => {
     if (!videoId) return '';
     const origin = encodeURIComponent(window.location.origin);
-    return `${YT_ORIGIN}/embed/${videoId}?enablejsapi=1&origin=${origin}&widget_referrer=${origin}&modestbranding=1&rel=0&iv_load_policy=3&autoplay=0&controls=1&fs=1`;
+    // controls=0 hides YouTube's own UI — our custom bar replaces it
+    return `${YT_ORIGIN}/embed/${videoId}?enablejsapi=1&origin=${origin}&widget_referrer=${origin}&modestbranding=1&rel=0&iv_load_policy=3&autoplay=0&controls=0&fs=1`;
   }, [videoId]);
 
   // Get live current time (interpolated from our own timer)
@@ -76,8 +80,12 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   // Send command to iframe via postMessage
   const sendCommand = useCallback((func: string, args: any[] = []) => {
     const iframe = iframeRef.current;
-    if (!iframe?.contentWindow) return;
+    if (!iframe?.contentWindow) {
+      console.warn('[DEBUG] sendCommand FAILED — no contentWindow for:', func);
+      return;
+    }
     const id = ++commandId.current;
+    console.log('[DEBUG] sendCommand:', func, JSON.stringify(args), `id=cmd_${id}`);
     iframe.contentWindow.postMessage(
       JSON.stringify({ event: 'command', func, args, id: `cmd_${id}` }),
       YT_ORIGIN,
@@ -103,6 +111,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
 
     playerState.current.playing = true;
     playerState.current.lastTimeUpdate = Date.now();
+    setUiPlaying(true);
     return true;
   }, [sendCommand]);
 
@@ -123,6 +132,9 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
         playerState.current.currentTime += 0.25;
         playerState.current.lastTimeUpdate = Date.now();
       }
+      // Sync UI state from refs every tick
+      setUiPlaying(playerState.current.playing);
+      setUiTime(getLiveTime());
     }, 250);
 
     return () => {
@@ -342,9 +354,11 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
         }
         if (data.status === 'playing') {
           tryMutedAutoplay();
+          setUiPlaying(true);
         } else if (data.status === 'paused') {
           sendCommand('pauseVideo');
           playerState.current.playing = false;
+          setUiPlaying(false);
           setNeedsUserInteraction(false);
         }
         useRoomStore.getState().setLastRemoteVersion(data.version || 0);
@@ -469,12 +483,14 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     const playback = state.room?.playback;
     if (!playback?.videoId || playback.baseServerTime <= 0) return;
 
+    console.log('[DEBUG] version watch triggered — version:', playbackVersion,
+      'status:', playback.status, 'updatedBy:', playback.updatedBy,
+      'myUserId:', state.currentUser?.id);
+
     // Skip if this version change was triggered by our own action.
-    // Admin's own seek already called seekTo + playVideo directly;
-    // re-applying via version watch would cause mute→playVideo sequence
-    // that disrupts already-playing video.
     const myUserId = state.currentUser?.id;
     if (myUserId && playback.updatedBy === myUserId) {
+      console.log('[DEBUG] version watch — SKIP (own action)');
       return;
     }
 
@@ -497,6 +513,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
 
     if (playback.status === 'playing') {
       tryMutedAutoplay();
+      setUiPlaying(true);
 
       // Fallback: if autoplay is blocked, show "Oynat" button after 2s
       if (autoplayRetryTimer.current) clearTimeout(autoplayRetryTimer.current);
@@ -508,6 +525,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     } else if (playback.status === 'paused') {
       sendCommand('pauseVideo');
       playerState.current.playing = false;
+      setUiPlaying(false);
       setNeedsUserInteraction(false);
     }
 
@@ -532,6 +550,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     sendCommand('playVideo');
     playerState.current.playing = true;
     playerState.current.lastTimeUpdate = Date.now();
+    setUiPlaying(true);
     setNeedsUserInteraction(false);
 
     getSocket().emit('playback:play', { roomId: rid, currentTime: time, clientEventId });
@@ -545,13 +564,17 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     const time = getLiveTime();
     const clientEventId = `evt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
+    console.log('[DEBUG] handleAdminPause — time:', time, 'roomId:', rid);
     applyingRemoteUpdate.current = true;
     sendCommand('pauseVideo');
     playerState.current.playing = false;
     playerState.current.currentTime = time;
     playerState.current.lastTimeUpdate = Date.now();
+    setUiPlaying(false);
+    setUiTime(time);
 
     getSocket().emit('playback:pause', { roomId: rid, currentTime: time, clientEventId });
+    console.log('[DEBUG] handleAdminPause — emitted playback:pause');
 
     setTimeout(() => { applyingRemoteUpdate.current = false; }, 500);
   }, [sendCommand, getLiveTime]);
@@ -570,6 +593,8 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     playerState.current.playing = true;
     lastLocalTime.current = targetTime;
     lastCheckTime.current = Date.now();
+    setUiPlaying(true);
+    setUiTime(targetTime);
     setNeedsUserInteraction(false);
 
     getSocket().emit('playback:seek', {
@@ -602,15 +627,16 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   // User clicks "Oynat" button — provides user interaction to bypass autoplay policy
   const handleUserPlay = useCallback(() => {
     sendCommand('playVideo');
-    playerState.current.playing = true;
-    playerState.current.lastTimeUpdate = Date.now();
-    setNeedsUserInteraction(false);
-  }, [sendCommand]);
+      playerState.current.playing = true;
+      playerState.current.lastTimeUpdate = Date.now();
+      setUiPlaying(true);
+      setNeedsUserInteraction(false);
+    }, [sendCommand]);
 
   if (!videoId || !embedUrl) return null;
 
-  const isPlaying = playerState.current.playing;
-  const displayTime = getLiveTime();
+  const isPlaying = uiPlaying;
+  const displayTime = uiTime;
 
   return (
     <div className="relative w-full h-full group">
@@ -672,7 +698,30 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       {/* Sync badge */}
       <SyncBadge />
 
-      {/* Admin control bar — only visible to owner/admin */}
+      {/* Center play/pause overlay — large button for admin */}
+      {isAdmin && playerReady && !buffering && (
+        <div className="absolute inset-0 flex items-center justify-center z-15 pointer-events-none">
+          <button
+            onClick={isPlaying ? handleAdminPause : handleAdminPlay}
+            className="pointer-events-auto w-16 h-16 flex items-center justify-center rounded-full
+              bg-white/10 hover:bg-white/25 backdrop-blur-sm transition-all duration-200
+              text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100"
+            title={isPlaying ? 'Durdur' : 'Oynat'}
+          >
+            {isPlaying ? (
+              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+              </svg>
+            ) : (
+              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Admin control bar — always visible for owner/admin */}
       {isAdmin && playerReady && (
         <AdminControlBar
           isPlaying={isPlaying}
@@ -746,7 +795,7 @@ function AdminControlBar({
     <div
       className="absolute bottom-0 left-0 right-0 z-20
         bg-gradient-to-t from-black/90 via-black/60 to-transparent
-        px-4 py-3 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+        px-4 py-3 opacity-100"
     >
       {/* Timeline slider */}
       <div className="mb-2">
