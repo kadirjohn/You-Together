@@ -179,6 +179,8 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
           fs: 1,
           iv_load_policy: 3,
           origin: window.location.origin,
+          host: 'https://www.youtube.com',
+          widget_referrer: window.location.origin,
         },
         events: {
           onReady: () => {
@@ -219,8 +221,24 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
               }
             }
           },
-          onError: () => {
-            addToast('Bu video gömülü oynatmaya izin vermiyor. Başka bir video deneyin.', 'error');
+          onError: (event: any) => {
+            // YouTube error codes:
+            // 2 - Invalid parameter
+            // 5 - HTML5 player error
+            // 100 - Video not found / removed
+            // 101 - Embed not allowed
+            // 150 - Embed not allowed (another variant)
+            const errorCode = event?.data;
+            if (errorCode === 101 || errorCode === 150) {
+              addToast('Bu video gömülü oynatmaya izin vermiyor. Başka bir video deneyin.', 'error');
+            } else if (errorCode === 100) {
+              addToast('Bu video bulunamadı veya kaldırılmış.', 'error');
+            } else if (errorCode === 5) {
+              // HTML5 player error - often bot detection or browser issue
+              addToast('Video oynatılamadı. YouTube hesabınıza giriş yapıp tekrar deneyin veya farklı bir video deneyin.', 'error');
+            } else {
+              addToast('Video yüklenirken bir hata oluştu. Başka bir video deneyin.', 'error');
+            }
           },
         },
       });

@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { getSocket } from '../lib/socket';
 import { useRoomStore } from '../stores/room.store';
 import { useUIStore } from '../stores/ui.store';
+import { getSession, saveSession, clearSession } from '../lib/session';
 import type { PublicRoomState, RoomUser, ChatMessage, SyncTarget } from '../lib/socket';
 import YouTubePlayer from '../components/YouTubePlayer';
 import ChatPanel from '../components/ChatPanel';

@@ -4,6 +4,7 @@ import { roomRepository } from '../rooms/room.repository.js';
 import {
   createRoomSchema,
   joinRoomSchema,
+  rejoinRoomSchema,
   videoChangeSchema,
   playbackEventSchema,
   seekEventSchema,
@@ -324,6 +325,72 @@ export function registerRoomHandlers(socket: Socket) {
     }
 
     broadcastRoomList();
+  });
+
+  // --- Room: Rejoin (same browser, new tab/socket) ---
+  socket.on('room:rejoin', async (payload: unknown) => {
+    const parsed = rejoinRoomSchema.safeParse(payload);
+    if (!parsed.success) {
+      socket.emit('room:error', { message: 'Geçersiz yeniden katılım bilgileri.' });
+      return;
+    }
+
+    const { roomId, userId, displayName } = parsed.data;
+
+    const room = await repo.getRoom(roomId);
+    if (!room) {
+      socket.emit('room:error', { message: 'Bu oda bulunamadı veya süresi dolmuş.' });
+      return;
+    }
+
+    // Find existing user by userId
+    const users = await repo.getUsers(roomId);
+    const existingUser = users.find((u) => u.id === userId);
+    if (!existingUser) {
+      // User was removed from room or session is stale
+      socket.emit('room:error', { message: 'Oturumunuz geçersiz. Lütfen PIN ile tekrar katılın.' });
+      return;
+    }
+
+    // Check if this user already has another socket in the room
+    // Remove the old socket mapping if any
+    if (existingUser.socketId && existingUser.socketId !== socket.id) {
+      await repo.deleteSocketUserMap(existingUser.socketId);
+      const oldSocket = getIO().sockets.sockets.get(existingUser.socketId);
+      if (oldSocket) {
+        void oldSocket.leave(roomId);
+      }
+    }
+
+    // Update user with new socket
+    existingUser.socketId = socket.id;
+    existingUser.displayName = displayName; // allow display name update
+    existingUser.lastSeenAt = now();
+    await repo.saveUsers(roomId, users.map((u) => (u.id === existingUser.id ? existingUser : u)));
+    await repo.storeSocketUserMap(socket.id, { userId: existingUser.id, roomId });
+    void socket.join(roomId);
+
+    const publicRoom = await buildPublicRoomState(roomId);
+    const chatHistory = await repo.getChatMessages(roomId);
+    const targetTime = computeCurrentRoomTime(room.playback);
+
+    socket.emit('room:joined', {
+      room: publicRoom,
+      user: existingUser,
+      users,
+      chatHistory,
+      serverTime: now(),
+      syncTarget: {
+        videoId: room.playback.videoId,
+        status: room.playback.status,
+        targetTime,
+        version: room.playback.version,
+      },
+    });
+
+    broadcastToRoom(roomId, 'room:users:update', users);
+
+    // Don't send "user joined" system message on rejoin
   });
 
   // --- Room: List ---

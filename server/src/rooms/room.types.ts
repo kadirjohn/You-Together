@@ -122,6 +122,12 @@ export const adminGrantSchema = z.object({
   targetUserId: z.string().min(1),
 });
 
+export const rejoinRoomSchema = z.object({
+  roomId: z.string().min(1),
+  userId: z.string().min(1),
+  displayName: z.string().min(2).max(24).trim(),
+});
+
 export const clientHeartbeatSchema = z.object({
   roomId: z.string().min(1),
 });

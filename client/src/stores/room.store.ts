@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { PublicRoomState, RoomUser, ChatMessage, SyncTarget } from '../lib/socket';
+import { saveSession, clearSession } from '../lib/session';
 
 export type SyncStatus = 'idle' | 'synced' | 'slightly-off' | 'resyncing' | 'buffering';
 
@@ -77,5 +78,8 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
       };
     }),
 
-  reset: () => set(initialState),
+  reset: () => {
+    clearSession();
+    set(initialState);
+  },
 }));
