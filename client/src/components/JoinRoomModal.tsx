@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSocket } from '../lib/socket';
 import { useUIStore } from '../stores/ui.store';
+import { saveSession } from '../lib/session';
 import Modal from './ui/Modal';
 
 export default function JoinRoomModal() {
@@ -29,11 +30,23 @@ export default function JoinRoomModal() {
     setLoading(true);
     const socket = getSocket();
 
-    const handler = () => {
+    const handler = (data: any) => {
       socket.off('room:joined', handler);
       socket.off('room:error', errorHandler);
       setLoading(false);
       closeJoinModal();
+
+      // Save session so RoomPage can auto-rejoin
+      if (data?.user) {
+        saveSession({
+          roomId: joinRoomId,
+          userId: data.user.id,
+          displayName: data.user.displayName,
+          role: data.user.role,
+          joinedAt: data.user.joinedAt || Date.now(),
+        });
+      }
+
       navigate(`/room/${joinRoomId}`);
     };
 

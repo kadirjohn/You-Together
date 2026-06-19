@@ -25,6 +25,7 @@ export interface RoomUser {
   role: RoomRole;
   joinedAt: number;
   lastSeenAt: number;
+  disconnectedAt?: number;
 }
 
 export interface RoomPlaybackState {

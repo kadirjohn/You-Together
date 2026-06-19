@@ -15,7 +15,6 @@ export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   const room = useRoomStore((s) => s.room);
-  const setRoom = useRoomStore((s) => s.setRoom);
   const reset = useRoomStore((s) => s.reset);
   const { addToast } = useUIStore();
 
@@ -25,11 +24,79 @@ export default function RoomPage() {
   const [joinError, setJoinError] = useState('');
   const [joining, setJoining] = useState(false);
   const [joined, setJoined] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true); // new: session check loading
 
-  const pinRef = useRef(pin);
-  pinRef.current = pin;
-  const displayNameRef = useRef(displayName);
-  displayNameRef.current = displayName;
+  // --- Auto-rejoin: check localStorage session on mount ---
+  useEffect(() => {
+    if (!roomId) return;
+
+    const session = getSession();
+    if (session && session.roomId === roomId) {
+      // We have a session for this room — try auto-rejoin without PIN
+      const socket = getSocket();
+
+      // Declare timeout before handlers so both can clear it
+      let rejoinTimeout: ReturnType<typeof setTimeout>;
+
+      const handleRejoinSuccess = (data: {
+        room: PublicRoomState;
+        user: RoomUser;
+        users: RoomUser[];
+        chatHistory: ChatMessage[];
+        serverTime: number;
+        syncTarget: SyncTarget;
+      }) => {
+        clearTimeout(rejoinTimeout);
+        socket.off('room:joined', handleRejoinSuccess);
+        socket.off('room:error', handleRejoinFail);
+        useRoomStore.getState().setRoom(data.room);
+        useRoomStore.getState().setCurrentUser(data.user);
+        useRoomStore.getState().setUsers(data.users);
+        useRoomStore.getState().setChatHistory(data.chatHistory);
+        useRoomStore.getState().setServerOffsetMs(data.serverTime - Date.now());
+        // Update session displayName in case it changed
+        saveSession({ ...session, displayName: data.user.displayName, role: data.user.role });
+        setJoined(true);
+        setPinStep(false);
+        setCheckingSession(false);
+      };
+
+      const handleRejoinFail = () => {
+        clearTimeout(rejoinTimeout);
+        socket.off('room:joined', handleRejoinSuccess);
+        socket.off('room:error', handleRejoinFail);
+        // Session is stale — clear it and fall back to PIN screen
+        clearSession();
+        setCheckingSession(false);
+      };
+
+      socket.on('room:joined', handleRejoinSuccess);
+      socket.on('room:error', handleRejoinFail);
+
+      socket.emit('room:rejoin', {
+        roomId,
+        userId: session.userId,
+        displayName: session.displayName,
+      });
+
+      // Timeout: if server doesn't respond in 5s, fallback to PIN
+      rejoinTimeout = setTimeout(() => {
+        socket.off('room:joined', handleRejoinSuccess);
+        socket.off('room:error', handleRejoinFail);
+        clearSession();
+        setCheckingSession(false);
+      }, 5000);
+
+      return () => {
+        clearTimeout(rejoinTimeout);
+        socket.off('room:joined', handleRejoinSuccess);
+        socket.off('room:error', handleRejoinFail);
+      };
+    } else {
+      // No session — go straight to PIN screen
+      setCheckingSession(false);
+    }
+  }, [roomId]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -49,6 +116,16 @@ export default function RoomPage() {
       useRoomStore.getState().setUsers(data.users);
       useRoomStore.getState().setChatHistory(data.chatHistory);
       useRoomStore.getState().setServerOffsetMs(data.serverTime - Date.now());
+
+      // Save session so this browser remembers the user
+      saveSession({
+        roomId: roomId!,
+        userId: data.user.id,
+        displayName: data.user.displayName,
+        role: data.user.role,
+        joinedAt: data.user.joinedAt,
+      });
+
       setJoined(true);
       setPinStep(false);
       setJoinError('');
@@ -137,6 +214,15 @@ export default function RoomPage() {
         u.id === data.userId ? { ...u, role: data.role as RoomUser['role'] } : u,
       );
       useRoomStore.getState().setUsers(updated);
+
+      // Update session if it's the current user
+      const currentUser = useRoomStore.getState().currentUser;
+      if (currentUser && data.userId === currentUser.id) {
+        const session = getSession();
+        if (session) {
+          saveSession({ ...session, role: data.role as RoomUser['role'] });
+        }
+      }
     };
 
     const handleDisconnect = () => {
@@ -170,11 +256,10 @@ export default function RoomPage() {
       socket.off('admin:updated', handleAdminUpdated);
       socket.off('disconnect', handleDisconnect);
 
-      // Leave room on unmount
-      if (joined) {
-        socket.emit('room:leave');
-        reset();
-      }
+      // Do NOT emit room:leave on unmount (page refresh / navigate).
+      // Server disconnect handler gives 30s grace period for rejoin.
+      // Session is kept in localStorage so the user can auto-rejoin.
+      // Only explicit "back" button click emits room:leave.
     };
   }, [roomId]);
 
@@ -199,6 +284,18 @@ export default function RoomPage() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleJoin();
   };
+
+  // --- Session check loading ---
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen bg-bg-main flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-red-main border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-text-muted text-sm">Oturum kontrol ediliyor...</p>
+        </div>
+      </div>
+    );
+  }
 
   // --- PIN Step ---
   if (pinStep) {

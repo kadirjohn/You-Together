@@ -25,24 +25,27 @@ export async function roomsRoute(app: FastifyInstance) {
   app.get('/api/rooms', async (_req, reply) => {
     const rooms = await repo.getAllRooms();
 
-    const publicRooms = await Promise.all(
-      rooms.map(async (room) => {
-        const users = await repo.getUsers(room.id);
-        return {
-          id: room.id,
-          name: room.name,
-          createdAt: room.createdAt,
-          userCount: users.length,
-          maxUsers: room.maxUsers,
-          hasVideo: room.playback.videoId !== null,
-          playback: {
-            videoId: room.playback.videoId,
-            status: room.playback.status,
-            version: room.playback.version,
-          },
-        };
-      }),
-    );
+    const publicRooms = (
+      await Promise.all(
+        rooms.map(async (room) => {
+          const users = await repo.getUsers(room.id);
+          if (users.length === 0) return null;
+          return {
+            id: room.id,
+            name: room.name,
+            createdAt: room.createdAt,
+            userCount: users.length,
+            maxUsers: room.maxUsers,
+            hasVideo: room.playback.videoId !== null,
+            playback: {
+              videoId: room.playback.videoId,
+              status: room.playback.status,
+              version: room.playback.version,
+            },
+          };
+        }),
+      )
+    ).filter((r): r is NonNullable<typeof r> => r !== null);
 
     return reply.send(publicRooms);
   });

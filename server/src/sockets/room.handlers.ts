@@ -28,6 +28,7 @@ import { now, computeCurrentRoomTime } from '../utils/time.js';
 import { config } from '../config.js';
 
 const repo = roomRepository();
+const DISCONNECT_GRACE_SECONDS = 30;
 
 // --- Helper: Build Public Room State ---
 
@@ -39,7 +40,7 @@ async function buildPublicRoomState(roomId: string): Promise<PublicRoomState | n
     id: room.id,
     name: room.name,
     createdAt: room.createdAt,
-    userCount: users.length,
+    userCount: users.filter((u) => !(u as any).disconnectedAt).length,
     maxUsers: room.maxUsers,
     hasVideo: room.playback.videoId !== null,
     ownerUserId: room.ownerUserId,
@@ -66,11 +67,11 @@ async function transferOwnership(roomId: string): Promise<void> {
   if (!room) return;
 
   const users = await repo.getUsers(roomId);
-  if (users.length === 0) return;
+  const connected = users.filter((u) => !(u as any).disconnectedAt);
+  if (connected.length === 0) return;
 
-  // Prefer admin, then oldest member
-  const admin = users.find((u) => u.role === RoomRole.Admin);
-  const candidate = admin || users[0];
+  const admin = connected.find((u) => u.role === RoomRole.Admin);
+  const candidate = admin || connected[0];
 
   const updatedUsers = await repo.updateUserRole(roomId, candidate.id, RoomRole.Owner);
   if (!updatedUsers) return;
@@ -85,6 +86,57 @@ async function transferOwnership(roomId: string): Promise<void> {
     createdAt: now(),
   });
   broadcastRoomList();
+}
+
+// Track active disconnect timers so we can clear them on rejoin
+const disconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+async function scheduleDisconnectCleanup(userId: string, roomId: string) {
+  const timerKey = `${roomId}:${userId}`;
+
+  // Clear any existing timer for this user
+  const existingTimer = disconnectTimers.get(timerKey);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    disconnectTimers.delete(timerKey);
+  }
+
+  // Set new timer
+  const timer = setTimeout(async () => {
+    disconnectTimers.delete(timerKey);
+
+    // Check if user is still disconnected
+    const users = await repo.getUsers(roomId);
+    const user = users.find((u) => u.id === userId);
+    if (user && (user as any).disconnectedAt) {
+      // Still disconnected after grace period — remove them
+      await repo.removeUser(roomId, userId);
+      const remaining = await repo.getUsers(roomId);
+      const connected = remaining.filter((u) => !(u as any).disconnectedAt);
+
+      broadcastToRoom(roomId, 'room:users:update', remaining);
+      broadcastToRoom(roomId, 'user:left', { userId });
+      broadcastToRoom(roomId, 'system:message', {
+        id: generateMessageId(),
+        text: `${user.displayName} bağlantısı kesildi.`,
+        createdAt: now(),
+      });
+
+      const room = await repo.getRoom(roomId);
+      if (room && room.ownerUserId === userId && connected.length > 0) {
+        await transferOwnership(roomId);
+      }
+
+      // If no connected users, delete room
+      if (connected.length === 0) {
+        await repo.deleteRoom(roomId);
+      }
+
+      broadcastRoomList();
+    }
+  }, DISCONNECT_GRACE_SECONDS * 1000);
+
+  disconnectTimers.set(timerKey, timer);
 }
 
 export function registerRoomHandlers(socket: Socket) {
@@ -154,7 +206,6 @@ export function registerRoomHandlers(socket: Socket) {
       users,
     });
 
-    // Also join success for the creator
     socket.emit('room:joined', {
       room: publicRoom,
       user,
@@ -182,7 +233,6 @@ export function registerRoomHandlers(socket: Socket) {
 
     const { roomId, pin, displayName } = parsed.data;
 
-    // Rate limit PIN attempts
     const pinAttempts = (socket.data.pinAttempts || 0) + 1;
     socket.data.pinAttempts = pinAttempts;
     if (pinAttempts > 5 && socket.data.pinLockedUntil && socket.data.pinLockedUntil > now()) {
@@ -207,20 +257,29 @@ export function registerRoomHandlers(socket: Socket) {
     }
 
     const users = await repo.getUsers(roomId);
+    // Count all users including disconnected ones — reserved slots for 30s grace
     if (users.length >= room.maxUsers) {
       socket.emit('room:error', { message: 'Bu oda dolu.' });
       return;
     }
 
-    // Check if this socket already has a user in the room
+    // Check if this socket already has a user in the room (same socket reconnect)
     const existingForSocket = await repo.findUserBySocketId(roomId, socket.id);
     if (existingForSocket) {
-      // Reconnection - update socket ID
+      delete (existingForSocket as any).disconnectedAt;
       existingForSocket.socketId = socket.id;
       existingForSocket.lastSeenAt = now();
       await repo.saveUsers(roomId, users.map((u) => (u.id === existingForSocket.id ? existingForSocket : u)));
       await repo.storeSocketUserMap(socket.id, { userId: existingForSocket.id, roomId });
       void socket.join(roomId);
+
+      // Cancel disconnect timer
+      const timerKey = `${roomId}:${existingForSocket.id}`;
+      const timer = disconnectTimers.get(timerKey);
+      if (timer) {
+        clearTimeout(timer);
+        disconnectTimers.delete(timerKey);
+      }
 
       const publicRoom = await buildPublicRoomState(roomId);
       const chatHistory = await repo.getChatMessages(roomId);
@@ -258,7 +317,6 @@ export function registerRoomHandlers(socket: Socket) {
     await repo.storeSocketUserMap(socket.id, { userId, roomId });
     void socket.join(roomId);
 
-    // Reset PIN attempts on success
     socket.data.pinAttempts = 0;
 
     const updatedUsers = await repo.getUsers(roomId);
@@ -291,7 +349,7 @@ export function registerRoomHandlers(socket: Socket) {
     broadcastRoomList();
   });
 
-  // --- Room: Leave ---
+  // --- Room: Leave (explicit - removes user immediately) ---
   socket.on('room:leave', async () => {
     const mapping = await repo.getSocketUserMap(socket.id);
     if (!mapping) return;
@@ -299,6 +357,14 @@ export function registerRoomHandlers(socket: Socket) {
     const { userId, roomId } = mapping;
     const user = await repo.getUser(roomId, userId);
     if (!user) return;
+
+    // Cancel any disconnect timer
+    const timerKey = `${roomId}:${userId}`;
+    const timer = disconnectTimers.get(timerKey);
+    if (timer) {
+      clearTimeout(timer);
+      disconnectTimers.delete(timerKey);
+    }
 
     await repo.removeUser(roomId, userId);
     await repo.deleteSocketUserMap(socket.id);
@@ -313,21 +379,19 @@ export function registerRoomHandlers(socket: Socket) {
       createdAt: now(),
     });
 
-    // Check ownership transfer
     const room = await repo.getRoom(roomId);
     if (room && room.ownerUserId === userId) {
       await transferOwnership(roomId);
     }
 
-    // If room empty, set short TTL
     if (users.length === 0) {
-      await repo.setRoomTtl(roomId, config.roomEmptyTtlSeconds);
+      await repo.deleteRoom(roomId);
     }
 
     broadcastRoomList();
   });
 
-  // --- Room: Rejoin (same browser, new tab/socket) ---
+  // --- Room: Rejoin (same browser, new tab/socket, or after refresh) ---
   socket.on('room:rejoin', async (payload: unknown) => {
     const parsed = rejoinRoomSchema.safeParse(payload);
     if (!parsed.success) {
@@ -343,17 +407,25 @@ export function registerRoomHandlers(socket: Socket) {
       return;
     }
 
-    // Find existing user by userId
     const users = await repo.getUsers(roomId);
     const existingUser = users.find((u) => u.id === userId);
     if (!existingUser) {
-      // User was removed from room or session is stale
       socket.emit('room:error', { message: 'Oturumunuz geçersiz. Lütfen PIN ile tekrar katılın.' });
       return;
     }
 
-    // Check if this user already has another socket in the room
-    // Remove the old socket mapping if any
+    // Cancel disconnect timer if user was in grace period
+    const timerKey = `${roomId}:${userId}`;
+    const timer = disconnectTimers.get(timerKey);
+    if (timer) {
+      clearTimeout(timer);
+      disconnectTimers.delete(timerKey);
+    }
+
+    // Clear disconnect flag
+    delete (existingUser as any).disconnectedAt;
+
+    // Remove old socket mapping
     if (existingUser.socketId && existingUser.socketId !== socket.id) {
       await repo.deleteSocketUserMap(existingUser.socketId);
       const oldSocket = getIO().sockets.sockets.get(existingUser.socketId);
@@ -364,7 +436,7 @@ export function registerRoomHandlers(socket: Socket) {
 
     // Update user with new socket
     existingUser.socketId = socket.id;
-    existingUser.displayName = displayName; // allow display name update
+    existingUser.displayName = displayName;
     existingUser.lastSeenAt = now();
     await repo.saveUsers(roomId, users.map((u) => (u.id === existingUser.id ? existingUser : u)));
     await repo.storeSocketUserMap(socket.id, { userId: existingUser.id, roomId });
@@ -389,21 +461,21 @@ export function registerRoomHandlers(socket: Socket) {
     });
 
     broadcastToRoom(roomId, 'room:users:update', users);
-
-    // Don't send "user joined" system message on rejoin
   });
 
   // --- Room: List ---
   socket.on('room:list', async () => {
     const rooms = await repo.getAllRooms();
-    const publicRooms = await Promise.all(
+    const publicRooms = (await Promise.all(
       rooms.map(async (room) => {
         const users = await repo.getUsers(room.id);
+        const connectedCount = users.filter((u) => !(u as any).disconnectedAt).length;
+        if (connectedCount === 0) return null;
         return {
           id: room.id,
           name: room.name,
           createdAt: room.createdAt,
-          userCount: users.length,
+          userCount: connectedCount,
           maxUsers: room.maxUsers,
           hasVideo: room.playback.videoId !== null,
           playback: {
@@ -413,11 +485,11 @@ export function registerRoomHandlers(socket: Socket) {
           },
         };
       }),
-    );
+    )).filter((r): r is NonNullable<typeof r> => r !== null);
     socket.emit('room:list', publicRooms);
   });
 
-  // Disconnect handler
+  // --- Disconnect: 30s grace period before removing user ---
   socket.on('disconnect', async () => {
     const mapping = await repo.getSocketUserMap(socket.id);
     if (!mapping) return;
@@ -426,28 +498,18 @@ export function registerRoomHandlers(socket: Socket) {
     const user = await repo.getUser(roomId, userId);
     if (!user) return;
 
-    await repo.removeUser(roomId, userId);
+    // Don't remove user — mark as disconnected and schedule cleanup
     await repo.deleteSocketUserMap(socket.id);
     void socket.leave(roomId);
 
+    (user as any).disconnectedAt = now();
     const users = await repo.getUsers(roomId);
+    await repo.saveUsers(roomId, users.map((u) => (u.id === user.id ? user : u)));
+
+    // Broadcast updated user list (shows disconnected user)
     broadcastToRoom(roomId, 'room:users:update', users);
-    broadcastToRoom(roomId, 'user:left', { userId: user.id });
-    broadcastToRoom(roomId, 'system:message', {
-      id: generateMessageId(),
-      text: `${user.displayName} bağlantısı kesildi.`,
-      createdAt: now(),
-    });
 
-    const room = await repo.getRoom(roomId);
-    if (room && room.ownerUserId === userId) {
-      await transferOwnership(roomId);
-    }
-
-    if (users.length === 0) {
-      await repo.setRoomTtl(roomId, config.roomEmptyTtlSeconds);
-    }
-
-    broadcastRoomList();
+    // Schedule removal after grace period
+    await scheduleDisconnectCleanup(userId, roomId);
   });
 }

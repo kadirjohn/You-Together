@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSocket } from '../lib/socket';
 import { useUIStore } from '../stores/ui.store';
+ek biimport { saveSession } from '../lib/session';
 import Modal from './ui/Modal';
 
 export default function CreateRoomModal() {
@@ -39,6 +40,18 @@ export default function CreateRoomModal() {
       socket.off('room:error', errorHandler);
       setLoading(false);
       setShowCreateModal(false);
+
+      // Save session before navigating so RoomPage can auto-rejoin
+      if (data?.user) {
+        saveSession({
+          roomId: data.roomId,
+          userId: data.user.id,
+          displayName: data.user.displayName,
+          role: data.user.role,
+          joinedAt: data.user.joinedAt || Date.now(),
+        });
+      }
+
       navigate(`/room/${data.roomId}`);
       addToast('Oda oluşturuldu!', 'success');
     };

@@ -1,104 +1,103 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { getSocket } from '../lib/socket';
 import { useRoomStore } from '../stores/room.store';
 import { useUIStore } from '../stores/ui.store';
 import { computeExpectedRoomTime } from '../lib/time';
 
-let ytApiReady = false;
-const ytReadyCallbacks: Array<() => void> = [];
-
-function loadYouTubeAPI(): Promise<void> {
-  return new Promise((resolve) => {
-    if (ytApiReady) {
-      resolve();
-      return;
-    }
-
-    if (document.getElementById('yt-iframe-api')) {
-      ytReadyCallbacks.push(resolve);
-      return;
-    }
-
-    const tag = document.createElement('script');
-    tag.id = 'yt-iframe-api';
-    tag.src = 'https://www.youtube.com/iframe_api';
-    const firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
-
-    (window as any).onYouTubeIframeAPIReady = () => {
-      ytApiReady = true;
-      ytReadyCallbacks.forEach((cb) => cb());
-      ytReadyCallbacks.length = 0;
-    };
-
-    ytReadyCallbacks.push(resolve);
-  });
-}
+const YT_ORIGIN = 'https://www.youtube.com';
 
 interface YouTubePlayerProps {
   videoId: string | null;
 }
 
+// Plain iframe embed + direct postMessage API — no YT.Player dependency.
+// Uses youtube.com with session cookies — works when deployed on a real domain
+// (ngrok, production, etc.) where YouTube can verify the user's identity.
+// For localhost dev: use ngrok tunnel to get a public URL.
+// Player state tracked manually via refs with time interpolation.
 export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
-  const playerRef = useRef<any>(null);
-  const containerId = useRef(`yt-player-${Math.random().toString(36).slice(2)}`).current;
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const roomId = useRoomStore((s) => s.room?.id);
   const setStorePlayerReady = useRoomStore((s) => s.setPlayerReady);
   const addToast = useUIStore((s) => s.addToast);
+  const commandId = useRef(0);
 
   const [showAutoplayOverlay, setShowAutoplayOverlay] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [playerReady, setPlayerReady] = useState(false);
   const [userManuallySeeked, setUserManuallySeeked] = useState(false);
-  const lastVideoId = useRef<string | null>(null);
 
-  // Seek detection refs
+  // Player state tracking
+  const playerState = useRef({
+    playing: false,
+    currentTime: 0,
+    lastTimeUpdate: 0,   // Date.now() when currentTime was last set
+    muted: false,
+  });
   const lastLocalTime = useRef(0);
   const lastCheckTime = useRef(Date.now());
+  const applyingRemoteUpdate = useRef(false);
 
-  // Sync & seek detection loop (runs every 1 second for seek detection, drift check every 2)
+  // Build embed URL once
+  const embedUrl = useMemo(() => {
+    if (!videoId) return '';
+    const origin = encodeURIComponent(window.location.origin);
+    return `${YT_ORIGIN}/embed/${videoId}?enablejsapi=1&origin=${origin}&widget_referrer=${origin}&modestbranding=1&rel=0&iv_load_policy=3&autoplay=0&controls=1&fs=1`;
+  }, [videoId]);
+
+  // Get live current time (interpolated between infoDelivery events)
+  const getLiveTime = useCallback((): number => {
+    const ps = playerState.current;
+    if (ps.playing && ps.lastTimeUpdate > 0) {
+      return ps.currentTime + (Date.now() - ps.lastTimeUpdate) / 1000;
+    }
+    return ps.currentTime;
+  }, []);
+
+  // Send command to iframe via postMessage
+  const sendCommand = useCallback((func: string, args: any[] = []) => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow) return;
+    const id = ++commandId.current;
+    iframe.contentWindow.postMessage(
+      JSON.stringify({ event: 'command', func, args, id: `cmd_${id}` }),
+      YT_ORIGIN,
+    );
+  }, []);
+
+  // Seek detection & drift sync loop
   useEffect(() => {
     if (!playerReady || !roomId) return;
 
     let tickCount = 0;
 
     const interval = setInterval(() => {
-      const player = playerRef.current;
-      if (!player) return;
-
       const state = useRoomStore.getState();
       if (!state.room?.playback.videoId) return;
+      if (applyingRemoteUpdate.current) return;
 
-      const localTime = player.getCurrentTime?.() || 0;
+      const localTime = getLiveTime();
 
-      // --- Seek Detection (every tick) ---
-      if (!state.applyingRemoteUpdate) {
-        const now = Date.now();
-        const elapsed = (now - lastCheckTime.current) / 1000;
-        const expectedLocal = lastLocalTime.current + elapsed;
-        const jump = Math.abs(localTime - expectedLocal);
+      // Seek detection
+      const now = Date.now();
+      const elapsed = (now - lastCheckTime.current) / 1000;
+      const expectedLocal = lastLocalTime.current + (playerState.current.playing ? elapsed : 0);
+      const jump = Math.abs(localTime - expectedLocal);
 
-        // Detect manual seek: sudden jump > 3s that can't be explained by playback
-        // Per Model B, user seeks stay local and don't sync to others.
-        if (jump > 3 && lastLocalTime.current > 0) {
-          setUserManuallySeeked(true);
-        }
-
-        lastLocalTime.current = localTime;
-        lastCheckTime.current = now;
+      if (jump > 3 && lastLocalTime.current > 0) {
+        setUserManuallySeeked(true);
       }
 
-      // --- Drift Check (every 2 ticks = 2 seconds) ---
+      lastLocalTime.current = localTime;
+      lastCheckTime.current = now;
+
       tickCount++;
       if (tickCount % 2 !== 0) return;
 
-      // If user manually seeked, don't auto-correct — show button instead
       if (userManuallySeeked) {
         useRoomStore.getState().setSyncStatus('slightly-off');
         return;
       }
-
-      if (state.applyingRemoteUpdate) return;
 
       const expectedTime = computeExpectedRoomTime(
         {
@@ -124,162 +123,175 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
 
       if (absDrift <= 7) {
         useRoomStore.getState().setSyncStatus('slightly-off');
-        useRoomStore.getState().setApplyingRemoteUpdate(true);
-        player.seekTo?.(expectedTime, true);
-        setTimeout(() => {
-          useRoomStore.getState().setApplyingRemoteUpdate(false);
-        }, 500);
+        applyingRemoteUpdate.current = true;
+        sendCommand('seekTo', [expectedTime, true]);
+        playerState.current.currentTime = expectedTime;
+        playerState.current.lastTimeUpdate = Date.now();
+        setTimeout(() => { applyingRemoteUpdate.current = false; }, 500);
         return;
       }
 
       useRoomStore.getState().setSyncStatus('resyncing');
-      useRoomStore.getState().setApplyingRemoteUpdate(true);
-      player.seekTo?.(expectedTime, true);
+      applyingRemoteUpdate.current = true;
+      sendCommand('seekTo', [expectedTime, true]);
+      playerState.current.currentTime = expectedTime;
+      playerState.current.lastTimeUpdate = Date.now();
       addToast('Oda zamanına senkronize edildin.', 'info');
-      setTimeout(() => {
-        useRoomStore.getState().setApplyingRemoteUpdate(false);
-      }, 500);
+      setTimeout(() => { applyingRemoteUpdate.current = false; }, 500);
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [playerReady, roomId, userManuallySeeked]);
+  }, [playerReady, roomId, userManuallySeeked, sendCommand, getLiveTime]);
 
-  // Reset seek detection on new video
+  // Reset on video change
   useEffect(() => {
     lastLocalTime.current = 0;
     lastCheckTime.current = Date.now();
     setUserManuallySeeked(false);
+    playerState.current = { playing: false, currentTime: 0, lastTimeUpdate: 0, muted: false };
   }, [videoId]);
 
-  // Create / destroy player
+  // Create iframe & listen for postMessage events
   useEffect(() => {
     if (!videoId) {
-      if (playerRef.current) {
-        playerRef.current.destroy();
-        playerRef.current = null;
-      }
       setPlayerReady(false);
       return;
     }
 
-    loadYouTubeAPI().then(() => {
-      if (playerRef.current) {
-        playerRef.current.destroy();
-        playerRef.current = null;
-      }
-      setPlayerReady(false);
+    setPlayerReady(false);
+    setBuffering(false);
 
-      playerRef.current = new (window as any).YT.Player(containerId, {
-        videoId,
-        playerVars: {
-          autoplay: 0,
-          controls: 1,
-          modestbranding: 1,
-          rel: 0,
-          fs: 1,
-          iv_load_policy: 3,
-          origin: window.location.origin,
-          host: 'https://www.youtube.com',
-          widget_referrer: window.location.origin,
-        },
-        events: {
-          onReady: () => {
-            setPlayerReady(true);
-            setStorePlayerReady(true);
-            setBuffering(false);
-            lastLocalTime.current = 0;
-            lastCheckTime.current = Date.now();
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== YT_ORIGIN) return;
+
+      let data: any;
+      try {
+        data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+      } catch {
+        return;
+      }
+
+      // onReady
+      if (data.event === 'onReady') {
+        setPlayerReady(true);
+        setStorePlayerReady(true);
+        setBuffering(false);
+        playerState.current.currentTime = 0;
+        playerState.current.lastTimeUpdate = Date.now();
+        lastLocalTime.current = 0;
+        lastCheckTime.current = Date.now();
+        if (roomId) {
+          getSocket().emit('client:player-ready', { roomId });
+        }
+        return;
+      }
+
+      // onStateChange: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
+      if (data.event === 'onStateChange') {
+        const state = data.info ?? data.data;
+        const storeState = useRoomStore.getState();
+
+        if (state === 1) {
+          setBuffering(false);
+          playerState.current.playing = true;
+          if (!applyingRemoteUpdate.current && !storeState.applyingRemoteUpdate) {
+            const clientEventId = `evt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
             if (roomId) {
-              getSocket().emit('client:player-ready', { roomId });
+              getSocket().emit('playback:play', {
+                roomId,
+                currentTime: getLiveTime(),
+                clientEventId,
+              });
             }
-          },
-          onStateChange: (event: any) => {
-            const state = useRoomStore.getState();
-            const player = playerRef.current;
-
-            if (state.applyingRemoteUpdate) return;
-
-            const YT = (window as any).YT;
-            if (event.data === YT.PlayerState.PLAYING) {
-              setBuffering(false);
-              const currentTime = player.getCurrentTime?.() || 0;
-              const clientEventId = `evt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-              if (roomId) {
-                getSocket().emit('playback:play', { roomId, currentTime, clientEventId });
-              }
-            } else if (event.data === YT.PlayerState.PAUSED) {
-              const currentTime = player.getCurrentTime?.() || 0;
-              const clientEventId = `evt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-              if (roomId) {
-                getSocket().emit('playback:pause', { roomId, currentTime, clientEventId });
-              }
-            } else if (event.data === YT.PlayerState.BUFFERING) {
-              setBuffering(true);
-              useRoomStore.getState().setSyncStatus('buffering');
-              if (roomId) {
-                getSocket().emit('client:buffering', { roomId });
-              }
+          }
+        } else if (state === 2) {
+          playerState.current.playing = false;
+          // Update time precisely on pause
+          playerState.current.lastTimeUpdate = Date.now();
+          if (!applyingRemoteUpdate.current && !storeState.applyingRemoteUpdate) {
+            const clientEventId = `evt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            if (roomId) {
+              getSocket().emit('playback:pause', {
+                roomId,
+                currentTime: getLiveTime(),
+                clientEventId,
+              });
             }
-          },
-          onError: (event: any) => {
-            // YouTube error codes:
-            // 2 - Invalid parameter
-            // 5 - HTML5 player error
-            // 100 - Video not found / removed
-            // 101 - Embed not allowed
-            // 150 - Embed not allowed (another variant)
-            const errorCode = event?.data;
-            if (errorCode === 101 || errorCode === 150) {
-              addToast('Bu video gömülü oynatmaya izin vermiyor. Başka bir video deneyin.', 'error');
-            } else if (errorCode === 100) {
-              addToast('Bu video bulunamadı veya kaldırılmış.', 'error');
-            } else if (errorCode === 5) {
-              // HTML5 player error - often bot detection or browser issue
-              addToast('Video oynatılamadı. YouTube hesabınıza giriş yapıp tekrar deneyin veya farklı bir video deneyin.', 'error');
-            } else {
-              addToast('Video yüklenirken bir hata oluştu. Başka bir video deneyin.', 'error');
-            }
-          },
-        },
-      });
-    });
-
-    lastVideoId.current = videoId;
-
-    return () => {
-      if (playerRef.current) {
-        playerRef.current.destroy();
-        playerRef.current = null;
+          }
+        } else if (state === 3) {
+          setBuffering(true);
+          useRoomStore.getState().setSyncStatus('buffering');
+          playerState.current.playing = false;
+          if (roomId) {
+            getSocket().emit('client:buffering', { roomId });
+          }
+        }
+        return;
       }
+
+      // infoDelivery — currentTime updates from YouTube
+      if (data.event === 'infoDelivery' || data.info?.currentTime !== undefined) {
+        const info = data.info ?? data;
+        if (typeof info?.currentTime === 'number') {
+          playerState.current.currentTime = info.currentTime;
+          playerState.current.lastTimeUpdate = Date.now();
+        }
+        if (typeof info?.muted === 'boolean') {
+          playerState.current.muted = info.muted;
+        }
+        return;
+      }
+
+      // onError
+      if (data.event === 'onError') {
+        const errorCode = data.info ?? data.data;
+        if (errorCode === 101 || errorCode === 150) {
+          addToast('Bu video gömülü oynatmaya izin vermiyor. Başka bir video deneyin.', 'error');
+        } else if (errorCode === 100) {
+          addToast('Bu video bulunamadı veya kaldırılmış.', 'error');
+        } else if (errorCode === 5) {
+          addToast('Video oynatılamadı. YouTube hesabınıza giriş yapıp tekrar deneyin.', 'error');
+        } else {
+          addToast('Video yüklenirken bir hata oluştu.', 'error');
+        }
+        return;
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
     };
   }, [videoId]);
 
-  // Listen for sync commands from server
+  // Sync command handler
   useEffect(() => {
     if (!roomId) return;
 
     const socket = getSocket();
     const handleSyncCommand = (data: any) => {
-      if (!playerRef.current) return;
-      const player = playerRef.current;
-      useRoomStore.getState().setApplyingRemoteUpdate(true);
+      applyingRemoteUpdate.current = true;
 
       try {
         if (typeof data.targetTime === 'number') {
-          player.seekTo?.(data.targetTime, true);
+          sendCommand('seekTo', [data.targetTime, true]);
+          playerState.current.currentTime = data.targetTime;
+          playerState.current.lastTimeUpdate = Date.now();
         }
         if (data.status === 'playing') {
-          player.playVideo?.();
+          sendCommand('playVideo');
+          playerState.current.playing = true;
         } else if (data.status === 'paused') {
-          player.pauseVideo?.();
+          sendCommand('pauseVideo');
+          playerState.current.playing = false;
         }
         useRoomStore.getState().setLastRemoteVersion(data.version || 0);
         setUserManuallySeeked(false);
-        lastLocalTime.current = player.getCurrentTime?.() || 0;
+        lastLocalTime.current = playerState.current.currentTime;
         lastCheckTime.current = Date.now();
       } finally {
         setTimeout(() => {
-          useRoomStore.getState().setApplyingRemoteUpdate(false);
+          applyingRemoteUpdate.current = false;
         }, 500);
       }
     };
@@ -288,33 +300,36 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     return () => {
       socket.off('sync:command', handleSyncCommand);
     };
-  }, [roomId]);
+  }, [roomId, sendCommand]);
 
   const handleRejoinRoom = () => {
-    if (!playerRef.current || !roomId) return;
-    const player = playerRef.current;
-    useRoomStore.getState().setApplyingRemoteUpdate(true);
+    if (!roomId) return;
+    applyingRemoteUpdate.current = true;
 
     getSocket().emit('sync:request', {
       roomId,
-      localTime: player.getCurrentTime?.() || 0,
+      localTime: getLiveTime(),
       playerState: 'desynced',
     });
 
-    // The sync:command response will handle the actual sync
     setTimeout(() => {
-      useRoomStore.getState().setApplyingRemoteUpdate(false);
+      applyingRemoteUpdate.current = false;
       setUserManuallySeeked(false);
     }, 1000);
   };
 
-  if (!videoId) return null;
+  if (!videoId || !embedUrl) return null;
 
   return (
     <div className="relative w-full h-full">
-      <div id={containerId} className="w-full h-full" />
+      <iframe
+        ref={iframeRef}
+        src={embedUrl}
+        className="w-full h-full border-0"
+        allow="autoplay; encrypted-media; fullscreen"
+        title="YouTube video player"
+      />
 
-      {/* Buffering overlay */}
       {buffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10">
           <div className="text-center">
@@ -324,7 +339,6 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
         </div>
       )}
 
-      {/* "Beraber izlemeye devam et" overlay */}
       {userManuallySeeked && !buffering && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 animate-fade-in">
           <button
@@ -343,10 +357,8 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
         </div>
       )}
 
-      {/* Sync badge */}
       <SyncBadge />
 
-      {/* Autoplay overlay */}
       {showAutoplayOverlay && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-10">
           <div className="text-center p-6">
@@ -357,11 +369,11 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
             <button
               onClick={() => {
                 setShowAutoplayOverlay(false);
-                const player = playerRef.current;
-                if (!player || !roomId) return;
+                if (!roomId) return;
+                sendCommand('playVideo');
                 getSocket().emit('sync:request', {
                   roomId,
-                  localTime: player.getCurrentTime?.() || 0,
+                  localTime: getLiveTime(),
                   playerState: 'ready',
                 });
               }}
@@ -377,7 +389,6 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   );
 }
 
-// SyncBadge component - shows sync status
 function SyncBadge() {
   const syncStatus = useRoomStore((s) => s.syncStatus);
   const playerReady = useRoomStore((s) => s.playerReady);
@@ -385,7 +396,7 @@ function SyncBadge() {
 
   if (!playerReady || !room?.playback.videoId) return null;
 
-  const config = {
+  const config: Record<string, { label: string; color: string }> = {
     synced: { label: 'Senkronize', color: 'bg-green-500/20 text-green-400 border-green-500/30' },
     'slightly-off': { label: 'Az fark', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' },
     resyncing: { label: 'Senkronize ediliyor...', color: 'bg-red-main/20 text-red-soft border-red-main/30' },
