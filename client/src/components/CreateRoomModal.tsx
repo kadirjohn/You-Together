@@ -9,10 +9,10 @@ export default function CreateRoomModal() {
   const navigate = useNavigate();
   const { setShowCreateModal, addToast } = useUIStore();
 
+  const [youtubeUrl, setYoutubeUrl] = useState('');
   const [roomName, setRoomName] = useState('');
   const [pin, setPin] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [youtubeUrl, setYoutubeUrl] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -41,7 +41,6 @@ export default function CreateRoomModal() {
       setLoading(false);
       setShowCreateModal(false);
 
-      // Save session before navigating so RoomPage can auto-rejoin
       if (data?.user) {
         saveSession({
           roomId: data.roomId,
@@ -73,7 +72,6 @@ export default function CreateRoomModal() {
       initialYoutubeUrl: youtubeUrl.trim() || undefined,
     });
 
-    // Timeout
     setTimeout(() => {
       socket.off('room:created', handler);
       socket.off('room:error', errorHandler);
@@ -89,50 +87,78 @@ export default function CreateRoomModal() {
   return (
     <Modal open={true} onClose={() => setShowCreateModal(false)} title="Yeni Oda Oluştur">
       <div className="space-y-3">
-        <input
-          type="text"
-          placeholder="Oda adı (örn: Film Gecesi)"
-          value={roomName}
-          onChange={(e) => setRoomName(e.target.value)}
-          onKeyDown={handleKeyDown}
-          maxLength={60}
-          className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-            text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-            transition-colors text-sm"
-          autoFocus
-        />
-        <input
-          type="text"
-          placeholder="PIN (4-12 karakter)"
-          value={pin}
-          onChange={(e) => setPin(e.target.value)}
-          onKeyDown={handleKeyDown}
-          maxLength={12}
-          className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-            text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-            transition-colors text-sm"
-        />
-        <input
-          type="text"
-          placeholder="Görünen adın"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          onKeyDown={handleKeyDown}
-          maxLength={24}
-          className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-            text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-            transition-colors text-sm"
-        />
-        <input
-          type="text"
-          placeholder="YouTube linki (opsiyonel)"
-          value={youtubeUrl}
-          onChange={(e) => setYoutubeUrl(e.target.value)}
-          onKeyDown={handleKeyDown}
-          className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
-            text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
-            transition-colors text-sm"
-        />
+        {/* Step 1: YouTube linki (opsiyonel) */}
+        <div>
+          <label className="block text-text-muted text-xs font-medium mb-1.5 uppercase tracking-wide">
+            1. YouTube Linki <span className="text-text-muted/50">(opsiyonel)</span>
+          </label>
+          <input
+            type="text"
+            placeholder="https://youtube.com/watch?v=..."
+            value={youtubeUrl}
+            onChange={(e) => setYoutubeUrl(e.target.value)}
+            onKeyDown={handleKeyDown}
+            className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
+              text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
+              transition-colors text-sm"
+            autoFocus
+          />
+        </div>
+
+        {/* Step 2: Oda adı */}
+        <div>
+          <label className="block text-text-muted text-xs font-medium mb-1.5 uppercase tracking-wide">
+            2. Oda Adı
+          </label>
+          <input
+            type="text"
+            placeholder="Film Gecesi, Müzik Partisi..."
+            value={roomName}
+            onChange={(e) => setRoomName(e.target.value)}
+            onKeyDown={handleKeyDown}
+            maxLength={60}
+            className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
+              text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
+              transition-colors text-sm"
+          />
+        </div>
+
+        {/* Step 3: PIN */}
+        <div>
+          <label className="block text-text-muted text-xs font-medium mb-1.5 uppercase tracking-wide">
+            3. PIN
+          </label>
+          <input
+            type="text"
+            placeholder="En az 4 karakter"
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            onKeyDown={handleKeyDown}
+            maxLength={12}
+            className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
+              text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
+              transition-colors text-sm"
+          />
+        </div>
+
+        {/* Step 4: Görünen ad */}
+        <div>
+          <label className="block text-text-muted text-xs font-medium mb-1.5 uppercase tracking-wide">
+            4. Görünen Adın
+          </label>
+          <input
+            type="text"
+            placeholder="Herkesin göreceği isim"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            onKeyDown={handleKeyDown}
+            maxLength={24}
+            className="w-full px-4 py-3 bg-bg-card border border-white/10 rounded-xl
+              text-text-main placeholder-text-muted focus:outline-none focus:border-red-main/50
+              transition-colors text-sm"
+          />
+        </div>
+
         {error && <p className="text-red-soft text-sm">{error}</p>}
         <button
           onClick={handleCreate}
