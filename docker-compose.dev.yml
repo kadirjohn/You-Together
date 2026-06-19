@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:7-alpine
     container_name: you-together-redis-dev
     ports:
-      - '6379:6379'
+      - '6380:6379'
     volumes:
       - redis_data_dev:/data
     healthcheck:
