@@ -357,14 +357,14 @@ export default function RoomPage() {
               className="w-16 h-16 mx-auto rounded-2xl object-contain mb-3 animate-float
                 drop-shadow-[0_0_16px_rgba(255,0,51,0.3)]"
             />
-            <h2 className="text-xl font-extrabold text-text-main">Odaya Katıl 🚪</h2>
+            <h2 className="text-xl font-extrabold text-text-main">Odaya Katıl</h2>
             <p className="text-text-muted text-sm mt-1 font-semibold">Takma adını ve PIN'i gir</p>
           </div>
 
           <div className="space-y-3">
             {/* Display Name */}
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <div className="relative input-icon-group">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
                 <UserIcon />
               </div>
               <input
@@ -382,8 +382,8 @@ export default function RoomPage() {
             </div>
 
             {/* PIN */}
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <div className="relative input-icon-group">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
                 <LockIcon />
               </div>
               <input
@@ -432,7 +432,7 @@ export default function RoomPage() {
                   Katılıyor...
                 </span>
               ) : (
-                'Katıl! 🎬'
+                'Katıl'
               )}
             </button>
             <button

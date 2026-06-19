@@ -152,7 +152,7 @@ export default function CreateRoomModal() {
     }
   };
 
-  const title = step === 'url' ? '🎬 Video Seç' : '📝 Oda Bilgileri';
+  const title = step === 'url' ? 'Video Seç' : 'Oda Bilgileri';
 
   return (
     <Modal open={true} onClose={() => setShowCreateModal(false)} title={title}>
@@ -162,10 +162,10 @@ export default function CreateRoomModal() {
           <p className="text-text-muted text-sm font-semibold">
             İzlemek istediğin YouTube linkini buraya yapıştır!
             <br />
-            <span className="text-text-muted/50 font-normal">Şimdilik geçebilirsin, sonra da eklersin 😉</span>
+            <span className="text-text-muted/50 font-normal">Sonra da eklenebilir.</span>
           </p>
-          <div className="relative">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+          <div className="relative input-icon-group">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
               <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M10 15l5.19-3L10 9v6m11.56-7.83c.13.47.22 1.1.28 1.9.07.8.1 1.49.1 2.09L22 12c0 2.19-.16 3.8-.44 4.83-.25.9-.83 1.48-1.73 1.73-.47.13-1.33.22-2.65.28-1.3.07-2.49.1-3.59.1L12 19c-4.19 0-6.8-.16-7.83-.44-.9-.25-1.48-.83-1.73-1.73-.13-.47-.22-1.1-.28-1.9-.07-.8-.1-1.49-.1-2.09L2 12c0-2.19.16-3.8.44-4.83.25-.9.83-1.48 1.73-1.73.47-.13 1.33-.22 2.65-.28 1.3-.07 2.49-.1 3.59-.1L12 5c4.19 0 6.8.16 7.83.44.9.25 1.48.83 1.73 1.73z" />
               </svg>
@@ -188,7 +188,7 @@ export default function CreateRoomModal() {
               className="flex-1 py-3 bg-red-main text-white font-extrabold rounded-2xl
                 cartoon-btn hover:bg-red-soft text-sm"
             >
-              {youtubeUrl.trim() ? 'Devam Et →' : 'Sonra eklerim →'}
+              {youtubeUrl.trim() ? 'Devam Et →' : 'Linki sonra ekle →'}
             </button>
           </div>
         </div>
@@ -219,13 +219,13 @@ export default function CreateRoomModal() {
             <label className="block text-text-muted text-xs font-bold mb-1.5 uppercase tracking-wider">
               Oda Adı
             </label>
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <div className="relative input-icon-group">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
                 <RoomIcon />
               </div>
               <input
                 type="text"
-                placeholder="Film gecesi, chill takılma..."
+                placeholder="Örn. Film gecesi"
                 value={roomName}
                 onChange={(e) => setRoomName(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -243,8 +243,8 @@ export default function CreateRoomModal() {
             <label className="block text-text-muted text-xs font-bold mb-1.5 uppercase tracking-wider">
               PIN
             </label>
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <div className="relative input-icon-group">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
                 <LockIcon />
               </div>
               <input
@@ -277,8 +277,8 @@ export default function CreateRoomModal() {
             <label className="block text-text-muted text-xs font-bold mb-1.5 uppercase tracking-wider">
               Takma Adın
             </label>
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <div className="relative input-icon-group">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
                 <UserIcon />
               </div>
               <input
@@ -317,7 +317,7 @@ export default function CreateRoomModal() {
                 Oluşturuluyor...
               </span>
             ) : (
-              'Odayı Kur! 🚀'
+              'Odayı Kur'
             )}
           </button>
         </div>

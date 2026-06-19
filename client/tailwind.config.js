@@ -33,7 +33,7 @@ export default {
         'pop-in': 'pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
         'bounce-in': 'bounce-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
         'wobble': 'wobble 0.5s ease-in-out',
-        'float': 'float 3s ease-in-out infinite',
+        'float': 'float 5s ease-in-out infinite',
         'eye-appear': 'eye-appear 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
       },
       keyframes: {

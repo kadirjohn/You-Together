@@ -125,11 +125,11 @@ export default function JoinRoomModal() {
   };
 
   return (
-    <Modal open={true} onClose={closeJoinModal} title="🚪 Odaya Katıl">
+    <Modal open={true} onClose={closeJoinModal} title="Odaya Katıl">
       <div className="space-y-3">
         {/* Display Name */}
-        <div className="relative">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+        <div className="relative input-icon-group">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
             <UserIcon />
           </div>
           <input
@@ -147,8 +147,8 @@ export default function JoinRoomModal() {
         </div>
 
         {/* PIN */}
-        <div className="relative">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+        <div className="relative input-icon-group">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon">
             <LockIcon />
           </div>
           <input
@@ -197,7 +197,7 @@ export default function JoinRoomModal() {
               Katılıyor...
             </span>
           ) : (
-            'Katıl! 🎬'
+            'Katıl'
           )}
         </button>
       </div>

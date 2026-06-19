@@ -125,6 +125,13 @@ body {
   transform: scale(1.01);
 }
 
+/* When input is focused, change sibling icon color to white with glow */
+.input-icon-group:focus-within .input-icon svg {
+  color: #ffffff;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.4));
+  transition: all 0.2s ease;
+}
+
 /* ── Keyframes ── */
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -159,7 +166,7 @@ body {
 
 @keyframes float {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
+  50% { transform: translateY(-6px); }
 }
 
 @keyframes eye-appear {

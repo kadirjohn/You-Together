@@ -75,12 +75,6 @@ export default function HomePage() {
 
       {/* Hero */}
       <section className="max-w-2xl mx-auto text-center px-4 py-16 animate-bounce-in relative">
-        {/* Decorative floating elements */}
-        <div className="absolute top-8 left-8 text-3xl animate-float opacity-20 select-none pointer-events-none" style={{ animationDelay: '0s' }}>🍿</div>
-        <div className="absolute top-12 right-12 text-2xl animate-float opacity-20 select-none pointer-events-none" style={{ animationDelay: '1s' }}>🎬</div>
-        <div className="absolute bottom-8 left-16 text-2xl animate-float opacity-20 select-none pointer-events-none" style={{ animationDelay: '0.5s' }}>🎶</div>
-        <div className="absolute bottom-12 right-8 text-3xl animate-float opacity-20 select-none pointer-events-none" style={{ animationDelay: '1.5s' }}>🎮</div>
-
         <div className="mb-6">
           <img
             src="/ytogether_logo.png"
@@ -92,7 +86,7 @@ export default function HomePage() {
         <h2 className="text-4xl md:text-5xl font-extrabold mb-4 tracking-tight leading-tight">
           Arkadaşlarınla aynı anda{' '}
           <span className="text-red-main glow-red-sm inline-block px-2 rounded-xl">YouTube</span>{' '}
-          izle! 🍿
+          izle!
         </h2>
         <p className="text-text-muted text-lg mb-8 leading-relaxed font-semibold">
           Oda kur, linki at, hep birlikte izleyin!
@@ -101,16 +95,26 @@ export default function HomePage() {
           <button
             onClick={() => setShowCreateModal(true)}
             className="px-7 py-3.5 bg-red-main text-white font-extrabold rounded-2xl
-              cartoon-btn hover:bg-red-soft text-base"
+              cartoon-btn hover:bg-red-soft text-base flex items-center gap-2"
           >
-            🎉 Oda Kur
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 8v8M8 12h8" />
+            </svg>
+            Oda Kur
           </button>
           <button
             onClick={fetchRooms}
             className="px-7 py-3.5 bg-bg-card text-text-main font-extrabold rounded-2xl
-              cartoon-btn hover:bg-bg-panel text-base"
+              cartoon-btn hover:bg-bg-panel text-base flex items-center gap-2"
           >
-            🔄 Yenile
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.5 2v6h-6" />
+              <path d="M2.5 22v-6h6" />
+              <path d="M21.34 8A10 10 0 003.34 16" />
+              <path d="M2.66 16A10 10 0 0020.66 8" />
+            </svg>
+            Yenile
           </button>
         </div>
       </section>
