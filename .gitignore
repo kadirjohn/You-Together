@@ -24,3 +24,7 @@ server/.env.local
 .DS_Store
 *.log
 npm-debug.log*
+./Plans/
+Plans
+trials.md
+proje-ozeti.md
