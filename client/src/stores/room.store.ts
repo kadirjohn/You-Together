@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { PublicRoomState, RoomUser, ChatMessage, SyncTarget } from '../lib/socket';
+import type { PublicRoomState, RoomUser, ChatMessage, SyncTarget, VideoMeta, WatchedVideo } from '../lib/socket';
 import { clearSession } from '../lib/session';
 
 export type SyncStatus = 'idle' | 'synced' | 'slightly-off' | 'resyncing' | 'buffering';
@@ -14,6 +14,10 @@ interface RoomStore {
   applyingRemoteUpdate: boolean;
   lastRemoteVersion: number;
   playerReady: boolean;
+  // Mevcut aktif videonun metası (süre + başlık + kanal).
+  meta: VideoMeta | null;
+  // Oda bazlı izlenen-videolar listesi (watch list).
+  watchlist: WatchedVideo[];
 
   setRoom: (room: PublicRoomState | null) => void;
   setCurrentUser: (user: RoomUser | null) => void;
@@ -25,6 +29,8 @@ interface RoomStore {
   setApplyingRemoteUpdate: (v: boolean) => void;
   setLastRemoteVersion: (v: number) => void;
   setPlayerReady: (v: boolean) => void;
+  setMeta: (meta: VideoMeta | null) => void;
+  setWatchlist: (videos: WatchedVideo[]) => void;
   updatePlayback: (state: {
     videoId?: string | null;
     status?: string;
@@ -46,6 +52,8 @@ const initialState = {
   applyingRemoteUpdate: false,
   lastRemoteVersion: 0,
   playerReady: false,
+  meta: null as VideoMeta | null,
+  watchlist: [] as WatchedVideo[],
 };
 
 export const useRoomStore = create<RoomStore>((set, get) => ({
@@ -64,6 +72,8 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   setApplyingRemoteUpdate: (v) => set({ applyingRemoteUpdate: v }),
   setLastRemoteVersion: (v) => set({ lastRemoteVersion: v }),
   setPlayerReady: (v) => set({ playerReady: v }),
+  setMeta: (meta) => set({ meta }),
+  setWatchlist: (videos) => set({ watchlist: videos }),
 
   updatePlayback: (playback) =>
     set((state) => {

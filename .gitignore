@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Build output
+dist/
+client/dist/
+server/dist/
+*.tsbuildinfo
+
+# Environment variables (secrets — never commit)
+.env
+.env.local
+.env.*.local
+client/.env
+client/.env.local
+server/.env
+server/.env.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.log
+npm-debug.log*

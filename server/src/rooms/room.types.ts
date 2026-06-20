@@ -37,6 +37,28 @@ export interface RoomPlaybackState {
   updatedBy: string | null;
 }
 
+// YouTube video metadata. Sunucu-taraflı fetch edilir, Redis'te cache'lenir.
+// durationSeconds yalnızca YouTube Data API ile gelir; yoksa null (istemci fallback).
+export interface VideoMeta {
+  videoId: string;
+  title: string | null;
+  channel: string | null;
+  durationSeconds: number | null;
+  thumbnail: string | null;
+  fetchedAt: number;
+}
+
+// Oda bazlı izlenen-videolar listesi elemanı (watch list). Ephemeral, oda TTL'i ile sınırlı.
+export interface WatchedVideo {
+  videoId: string;
+  title: string | null;
+  channel: string | null;
+  durationSeconds: number | null;
+  thumbnail: string | null;
+  addedBy: { id: string; displayName: string };
+  addedAt: number;
+}
+
 export interface RoomRecord {
   id: string;
   name: string;

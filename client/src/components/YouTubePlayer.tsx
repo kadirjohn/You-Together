@@ -35,6 +35,8 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   const isAdmin = currentUser?.role === 'owner' || currentUser?.role === 'admin';
   const addToast = useUIStore((s) => s.addToast);
   addToastRef.current = addToast;
+  // Sunucu-taraflı video metası (süre + başlık + kanal). Birincil süre kaynağı.
+  const meta = useRoomStore((s) => s.meta);
 
   const [buffering, setBuffering] = useState(false);
   const [playerReady, setPlayerReady] = useState(false);
@@ -51,7 +53,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     lastTimeUpdate: 0,
     muted: false,
   });
-  const videoDuration = useRef(7200);
+  const videoDuration = useRef<number | null>(null);
   const lastLocalTime = useRef(0);
   const lastCheckTime = useRef(Date.now());
   const applyingRemoteUpdate = useRef(false);
@@ -212,7 +214,9 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       if (data.event === 'infoDelivery' || data.info?.currentTime !== undefined) {
         const info = data.info ?? data;
         if (typeof info?.currentTime === 'number') { playerState.current.currentTime = info.currentTime; playerState.current.lastTimeUpdate = Date.now(); }
-        if (typeof info?.duration === 'number' && info.duration > 0) { videoDuration.current = info.duration; }
+        // Süre: sunucu metası birincil kaynaktır. Sunucu bilmiyorsa (null) postMessage
+        // yedek kaynaktır — ngrok/localhost'ta gelmez ama gelirse kullanılır.
+        if (videoDuration.current == null && typeof info?.duration === 'number' && info.duration > 0) { videoDuration.current = info.duration; }
         if (typeof info?.muted === 'boolean') { playerState.current.muted = info.muted; }
         if (info?.playerState === 1 || info?.currentTime !== undefined) { setNeedsUserInteraction(false); }
         return;
@@ -238,7 +242,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     if (!videoId) { setPlayerReady(false); setNeedsUserInteraction(false); initialSyncDone.current = false; return; }
     setPlayerReady(false); setBuffering(false); setNeedsUserInteraction(false); initialSyncDone.current = false;
     playerState.current = { playing: false, currentTime: 0, lastTimeUpdate: 0, muted: false };
-    lastLocalTime.current = 0; lastCheckTime.current = Date.now(); videoDuration.current = 7200;
+    lastLocalTime.current = 0; lastCheckTime.current = Date.now(); videoDuration.current = null;
     if (syncFallbackTimer.current) { clearTimeout(syncFallbackTimer.current); syncFallbackTimer.current = null; }
     syncFallbackTimer.current = setTimeout(() => {
       if (initialSyncDone.current) return;
@@ -320,6 +324,16 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
 
   // Version watch
   const playbackVersion = useRoomStore((s) => s.room?.playback.version ?? 0);
+  // Sunucu metası → videoDuration. Sunucu süresi birincil kaynak; postMessage yedek.
+  // meta değişince (yeni video / güncellenmiş meta) videoDuration güncellenir.
+  useEffect(() => {
+    if (!meta) return;
+    if (meta.videoId === useRoomStore.getState().room?.playback.videoId) {
+      if (typeof meta.durationSeconds === 'number' && meta.durationSeconds > 0) {
+        videoDuration.current = meta.durationSeconds;
+      }
+    }
+  }, [meta]);
   useEffect(() => {
     if (!playerReady || !roomIdFromStore || playbackVersion === 0) return;
     const state = useRoomStore.getState();
@@ -493,6 +507,11 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
           onToggleFullscreen={toggleFullscreen}
         />
       )}
+
+      {/* Member progress bar — salt-okunur, yalnızca gösterim (Bölüm 3.3) */}
+      {!isAdmin && playerReady && (
+        <MemberProgressBar currentTime={displayTime} duration={videoDuration.current} />
+      )}
     </div>
   );
 }
@@ -504,7 +523,7 @@ function AdminControlBar({
   isPlaying, currentTime, duration, isFullscreen,
   onPlay, onPause, onSeek, onToggleFullscreen,
 }: {
-  isPlaying: boolean; currentTime: number; duration: number; isFullscreen: boolean;
+  isPlaying: boolean; currentTime: number; duration: number | null; isFullscreen: boolean;
   onPlay: () => void; onPause: () => void; onSeek: (time: number) => void; onToggleFullscreen: () => void;
 }) {
   const [sliderValue, setSliderValue] = useState(0);
@@ -522,7 +541,10 @@ function AdminControlBar({
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
-  const sliderMax = duration > 0 ? duration : Math.max(currentTime + 120, 600);
+  // Süre biliniyorsa onu kullan; bilinmiyorsa akıllı fallback (sabit 120dk değil):
+  // akışkan timeline için currentTime + 60 (min 300). Süre gelince slider max güncellenir.
+  const sliderMax = duration && duration > 0 ? duration : Math.max(currentTime + 60, 300);
+  const durationKnown = duration != null && duration > 0;
 
   const getSliderTimeFromEvent = (e: React.MouseEvent | React.TouchEvent): number => {
     const rect = sliderRef.current?.getBoundingClientRect();
@@ -609,7 +631,7 @@ function AdminControlBar({
 
           {/* Time display */}
           <span className="text-white/80 text-sm font-mono tabular-nums">
-            {formatTime(currentTime)} / {formatTime(sliderMax)}
+            {formatTime(currentTime)} / {durationKnown ? formatTime(sliderMax) : '--:--'}
           </span>
         </div>
 
@@ -633,6 +655,48 @@ function AdminControlBar({
           {/* Admin label */}
           <span className="text-white/40 text-xs font-medium tracking-wide uppercase">Admin</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Member Progress Bar — salt-okunur, yalnızca gösterim (Bölüm 3.3)
+// Member'lar play/pause kontrolü görmez ama progress + süre görebilir.
+// ============================================================
+function MemberProgressBar({
+  currentTime,
+  duration,
+}: {
+  currentTime: number;
+  duration: number | null;
+}) {
+  const sliderMax = duration && duration > 0 ? duration : Math.max(currentTime + 60, 300);
+  const durationKnown = duration != null && duration > 0;
+  const pct = Math.max(0, Math.min(100, (currentTime / sliderMax) * 100));
+
+  const formatTime = (seconds: number): string => {
+    const s = Math.max(0, Math.floor(seconds));
+    const m = Math.floor(s / 60); const sec = s % 60;
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none
+      bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 py-3">
+      {/* Progress track (salt-okunur) */}
+      <div className="relative mb-2 h-1.5 w-full rounded-full bg-white/20 overflow-hidden">
+        <div
+          className="absolute top-0 left-0 h-full rounded-full bg-red-main"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {/* Time display */}
+      <div className="flex items-center justify-between">
+        <span className="text-white/80 text-sm font-mono tabular-nums">
+          {formatTime(currentTime)} / {durationKnown ? formatTime(sliderMax) : '--:--'}
+        </span>
+        <span className="text-white/40 text-xs font-medium tracking-wide uppercase">İzleyici</span>
       </div>
     </div>
   );

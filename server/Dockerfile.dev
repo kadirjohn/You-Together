@@ -1,0 +1,23 @@
+ARG NODE_VERSION=22
+
+FROM node:${NODE_VERSION}-alpine
+WORKDIR /app
+
+# ─── Server dependencies ───────────────────────────────────────────
+COPY server/package.json server/package-lock.json ./
+RUN npm ci
+
+# ─── Server config ─────────────────────────────────────────────────
+COPY server/tsconfig.json ./
+
+# ─── Client build (static olarak sunucudan serve edilir) ───────────
+COPY client/package.json client/package-lock.json ./client/
+RUN cd client && npm ci
+COPY client/ ./client/
+RUN cd client && npm run build
+
+# ─── Server source (volume mount ile hot-reload; ilk kopya build için) ──
+COPY server/src/ ./src/
+
+EXPOSE 3000
+CMD ["npx", "tsx", "src/index.ts"]

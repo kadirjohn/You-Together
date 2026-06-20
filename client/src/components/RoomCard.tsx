@@ -42,7 +42,16 @@ export default function RoomCard({ room, onJoin }: RoomCardProps) {
 
       {/* Info */}
       <div className="p-4">
-        <h3 className="font-extrabold text-text-main truncate mb-2 text-base">{room.name}</h3>
+        <h3 className="font-extrabold text-text-main truncate mb-1 text-base">{room.name}</h3>
+        {room.meta?.title && (
+          <p className="text-text-muted text-xs font-semibold truncate mb-2 flex items-center gap-1">
+            <span className="text-red-main shrink-0">▶</span>
+            <span className="truncate">{room.meta.title}</span>
+          </p>
+        )}
+        {room.meta?.channel && !room.meta?.title && (
+          <p className="text-text-muted text-xs font-semibold truncate mb-2">{room.meta.channel}</p>
+        )}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="flex items-center gap-1 text-xs text-text-muted font-bold">

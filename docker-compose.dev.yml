@@ -2,8 +2,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: you-together-redis-dev
+    restart: unless-stopped
     ports:
-      - '6380:6379'
+      - '6379:6379'
     volumes:
       - redis_data_dev:/data
     healthcheck:
@@ -11,6 +12,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  server:
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile.dev
+    container_name: you-together-server-dev
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./server/src:/app/src
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
 
 volumes:
   redis_data_dev:

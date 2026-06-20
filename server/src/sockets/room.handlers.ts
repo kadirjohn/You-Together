@@ -21,9 +21,10 @@ import type {
   RoomUser,
   PublicRoomState,
   ChatMessage,
+  WatchedVideo,
 } from '../rooms/room.types.js';
 import { generateRoomId, generateUserId, generateMessageId, hashPin, verifyPin } from '../utils/ids.js';
-import { extractYoutubeVideoId } from '../utils/youtube.js';
+import { extractYoutubeVideoId, fetchVideoMeta } from '../utils/youtube.js';
 import { now, computeCurrentRoomTime } from '../utils/time.js';
 import { config } from '../config.js';
 
@@ -46,6 +47,12 @@ async function buildPublicRoomState(roomId: string): Promise<PublicRoomState | n
     ownerUserId: room.ownerUserId,
     playback: room.playback,
   };
+}
+
+// Mevcut aktif videonun metasını getir (video yoksa null). Cache'li -> ucuz.
+async function getCurrentVideoMeta(videoId: string | null) {
+  if (!videoId) return null;
+  return fetchVideoMeta(videoId);
 }
 
 // --- Helper: Broadcast room list update ---
@@ -197,6 +204,21 @@ export function registerRoomHandlers(socket: Socket) {
     const publicRoom = await buildPublicRoomState(roomId);
     const users = await repo.getUsers(roomId);
     const shareUrl = `${config.publicBaseUrl}/room/${roomId}`;
+    const meta = await getCurrentVideoMeta(videoId);
+
+    // Oda oluşturulurken başlangıç videosunu watchlist'e ekle
+    let watchlist: WatchedVideo[] = [];
+    if (videoId) {
+      watchlist = await repo.addWatchedVideo(roomId, {
+        videoId,
+        title: meta?.title ?? null,
+        channel: meta?.channel ?? null,
+        durationSeconds: meta?.durationSeconds ?? null,
+        thumbnail: meta?.thumbnail ?? null,
+        addedBy: { id: userId, displayName },
+        addedAt: now(),
+      });
+    }
 
     socket.emit('room:created', {
       roomId,
@@ -211,6 +233,8 @@ export function registerRoomHandlers(socket: Socket) {
       user,
       users,
       chatHistory: [],
+      watchlist,
+      meta,
       serverTime: now(),
       syncTarget: {
         videoId,
@@ -283,6 +307,8 @@ export function registerRoomHandlers(socket: Socket) {
 
       const publicRoom = await buildPublicRoomState(roomId);
       const chatHistory = await repo.getChatMessages(roomId);
+      const watchlist = await repo.getWatchedVideos(roomId);
+      const meta = await getCurrentVideoMeta(room.playback.videoId);
       const targetTime = computeCurrentRoomTime(room.playback);
 
       socket.emit('room:joined', {
@@ -290,6 +316,8 @@ export function registerRoomHandlers(socket: Socket) {
         user: existingForSocket,
         users,
         chatHistory,
+        watchlist,
+        meta,
         serverTime: now(),
         syncTarget: {
           videoId: room.playback.videoId,
@@ -322,6 +350,8 @@ export function registerRoomHandlers(socket: Socket) {
     const updatedUsers = await repo.getUsers(roomId);
     const publicRoom = await buildPublicRoomState(roomId);
     const chatHistory = await repo.getChatMessages(roomId);
+    const watchlist = await repo.getWatchedVideos(roomId);
+    const meta = await getCurrentVideoMeta(room.playback.videoId);
     const targetTime = computeCurrentRoomTime(room.playback);
 
     socket.emit('room:joined', {
@@ -329,6 +359,8 @@ export function registerRoomHandlers(socket: Socket) {
       user,
       users: updatedUsers,
       chatHistory,
+      watchlist,
+      meta,
       serverTime: now(),
       syncTarget: {
         videoId: room.playback.videoId,
@@ -444,6 +476,8 @@ export function registerRoomHandlers(socket: Socket) {
 
     const publicRoom = await buildPublicRoomState(roomId);
     const chatHistory = await repo.getChatMessages(roomId);
+    const watchlist = await repo.getWatchedVideos(roomId);
+    const meta = await getCurrentVideoMeta(room.playback.videoId);
     const targetTime = computeCurrentRoomTime(room.playback);
 
     socket.emit('room:joined', {
@@ -451,6 +485,8 @@ export function registerRoomHandlers(socket: Socket) {
       user: existingUser,
       users,
       chatHistory,
+      watchlist,
+      meta,
       serverTime: now(),
       syncTarget: {
         videoId: room.playback.videoId,
@@ -471,6 +507,8 @@ export function registerRoomHandlers(socket: Socket) {
         const users = await repo.getUsers(room.id);
         const connectedCount = users.filter((u) => !(u as any).disconnectedAt).length;
         if (connectedCount === 0) return null;
+        // Aktif videonun metası (cache'li). Oda kartında başlık/kanal gösterimi için.
+        const meta = await getCurrentVideoMeta(room.playback.videoId);
         return {
           id: room.id,
           name: room.name,
@@ -483,6 +521,7 @@ export function registerRoomHandlers(socket: Socket) {
             status: room.playback.status,
             version: room.playback.version,
           },
+          meta,
         };
       }),
     )).filter((r): r is NonNullable<typeof r> => r !== null);

@@ -7,7 +7,7 @@ import {
   PlaybackStatus,
 } from '../rooms/room.types.js';
 import type { RoomPlaybackState, RoomUser } from '../rooms/room.types.js';
-import { extractYoutubeVideoId } from '../utils/youtube.js';
+import { extractYoutubeVideoId, fetchVideoMeta } from '../utils/youtube.js';
 import { generateMessageId } from '../utils/ids.js';
 import { now } from '../utils/time.js';
 import { getIO } from './socket.server.js';
@@ -153,6 +153,10 @@ export function registerAdminHandlers(socket: Socket) {
       return;
     }
 
+    // Sunucu-taraflı metadata (süre + başlık + kanal). Cache'li, API key opsiyonel.
+    // Birkaç yüz ms sürebilir; admin video-change rate-limit (10sn/3) içinde kabul edilebilir.
+    const meta = await fetchVideoMeta(videoId);
+
     const playback: RoomPlaybackState = {
       videoId,
       status: PlaybackStatus.Playing,
@@ -164,6 +168,17 @@ export function registerAdminHandlers(socket: Socket) {
 
     await repo.updatePlaybackState(roomId, playback);
 
+    // Watch list'e ekle (aynı video tekrar oynatılırsa en üste taşınır).
+    const watchlist = await repo.addWatchedVideo(roomId, {
+      videoId,
+      title: meta.title,
+      channel: meta.channel,
+      durationSeconds: meta.durationSeconds,
+      thumbnail: meta.thumbnail,
+      addedBy: { id: user.id, displayName: user.displayName },
+      addedAt: now(),
+    });
+
     broadcastToRoom(roomId, 'video:changed', {
       videoId,
       changedBy: {
@@ -171,7 +186,11 @@ export function registerAdminHandlers(socket: Socket) {
         displayName: user.displayName,
       },
       state: playback,
+      meta,
     });
+
+    // Tüm odaya güncellenmiş izlenen-videolar listesi.
+    broadcastToRoom(roomId, 'video:watchlist', watchlist);
 
     broadcastToRoom(roomId, 'system:message', {
       id: generateMessageId(),

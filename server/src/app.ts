@@ -1,7 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
-import { createServer } from 'http';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync } from 'fs';
@@ -27,7 +26,7 @@ export async function createApp() {
   });
 
   // Serve client build in production
-  const clientDistPath = join(__dirname, '..', '..', 'client', 'dist');
+  const clientDistPath = join(__dirname, '..', 'client', 'dist');
   if (existsSync(clientDistPath)) {
     await app.register(fastifyStatic, {
       root: clientDistPath,
@@ -47,11 +46,8 @@ export async function createApp() {
   await healthRoute(app);
   await roomsRoute(app);
 
-  // Create HTTP server
-  const httpServer = createServer(app.server);
-
-  // Create Socket.IO server
-  const io = createSocketServer(httpServer);
+  // Attach Socket.IO directly to Fastify's underlying HTTP server (Fastify v5)
+  const io = createSocketServer(app.server);
 
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id}`);
@@ -66,15 +62,14 @@ export async function createApp() {
     registerAdminHandlers(socket);
   });
 
-  return { app, httpServer, io };
+  return { app, io };
 }
 
 export async function startServer() {
   await connectRedis();
-  const { httpServer } = await createApp();
+  const { app } = await createApp();
 
-  httpServer.listen({ port: config.port, host: '0.0.0.0' }, () => {
-    console.log(`[Server] Running on http://0.0.0.0:${config.port}`);
-    console.log(`[Server] Env: ${config.nodeEnv}`);
-  });
+  await app.listen({ port: config.port, host: '0.0.0.0' });
+  console.log(`[Server] Running on http://0.0.0.0:${config.port}`);
+  console.log(`[Server] Env: ${config.nodeEnv}`);
 }

@@ -1,19 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { roomRepository } from '../rooms/room.repository.js';
 import { config } from '../config.js';
+import { checkRedisHealth } from '../redis/client.js';
+import { fetchVideoMeta } from '../utils/youtube.js';
 
 export async function healthRoute(app: FastifyInstance) {
   app.get('/api/health', async (_req, reply) => {
-    const repo = roomRepository();
-    let redisOk = false;
-    try {
-      const redis = app as any;
-      redisOk = true;
-    } catch {
-      // ignore
-    }
+    // Gerçek Redis ulaşılabilirlik kontrolü (öncesi taklit ediyordu, hiçbir şey ölçmüyordu).
+    const redisOk = await checkRedisHealth();
     return reply.send({
-      status: 'ok',
+      status: redisOk ? 'ok' : 'degraded',
+      redis: redisOk,
       timestamp: Date.now(),
     });
   });
@@ -30,6 +27,7 @@ export async function roomsRoute(app: FastifyInstance) {
         rooms.map(async (room) => {
           const users = await repo.getUsers(room.id);
           if (users.length === 0) return null;
+          const meta = room.playback.videoId ? await fetchVideoMeta(room.playback.videoId) : null;
           return {
             id: room.id,
             name: room.name,
@@ -42,6 +40,7 @@ export async function roomsRoute(app: FastifyInstance) {
               status: room.playback.status,
               version: room.playback.version,
             },
+            meta,
           };
         }),
       )
@@ -59,6 +58,7 @@ export async function roomsRoute(app: FastifyInstance) {
     }
 
     const users = await repo.getUsers(roomId);
+    const meta = room.playback.videoId ? await fetchVideoMeta(room.playback.videoId) : null;
     return reply.send({
       id: room.id,
       name: room.name,
@@ -71,6 +71,7 @@ export async function roomsRoute(app: FastifyInstance) {
         status: room.playback.status,
         version: room.playback.version,
       },
+      meta,
     });
   });
 }

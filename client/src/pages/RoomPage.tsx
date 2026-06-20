@@ -4,12 +4,13 @@ import { getSocket } from '../lib/socket';
 import { useRoomStore } from '../stores/room.store';
 import { useUIStore } from '../stores/ui.store';
 import { getSession, saveSession, clearSession } from '../lib/session';
-import type { PublicRoomState, RoomUser, ChatMessage, SyncTarget } from '../lib/socket';
+import type { PublicRoomState, RoomUser, ChatMessage, SyncTarget, VideoMeta, WatchedVideo } from '../lib/socket';
 import YouTubePlayer from '../components/YouTubePlayer';
 import ChatPanel from '../components/ChatPanel';
 import VideoInputBar from '../components/VideoInputBar';
 import UserList from '../components/UserList';
 import ShareRoomLink from '../components/ShareRoomLink';
+import WatchList from '../components/WatchList';
 
 /* ── Inline SVG Icons ── */
 const UserIcon = () => (
@@ -89,6 +90,8 @@ export default function RoomPage() {
         user: RoomUser;
         users: RoomUser[];
         chatHistory: ChatMessage[];
+        watchlist?: WatchedVideo[];
+        meta?: VideoMeta | null;
         serverTime: number;
         syncTarget: SyncTarget;
       }) => {
@@ -99,6 +102,8 @@ export default function RoomPage() {
         useRoomStore.getState().setCurrentUser(data.user);
         useRoomStore.getState().setUsers(data.users);
         useRoomStore.getState().setChatHistory(data.chatHistory);
+        useRoomStore.getState().setWatchlist(data.watchlist ?? []);
+        useRoomStore.getState().setMeta(data.meta ?? null);
         useRoomStore.getState().setServerOffsetMs(data.serverTime - Date.now());
         // Update session displayName in case it changed
         saveSession({ ...session, displayName: data.user.displayName, role: data.user.role });
@@ -154,6 +159,8 @@ export default function RoomPage() {
       user: RoomUser;
       users: RoomUser[];
       chatHistory: ChatMessage[];
+      watchlist?: WatchedVideo[];
+      meta?: VideoMeta | null;
       serverTime: number;
       syncTarget: SyncTarget;
     }) => {
@@ -161,6 +168,8 @@ export default function RoomPage() {
       useRoomStore.getState().setCurrentUser(data.user);
       useRoomStore.getState().setUsers(data.users);
       useRoomStore.getState().setChatHistory(data.chatHistory);
+      useRoomStore.getState().setWatchlist(data.watchlist ?? []);
+      useRoomStore.getState().setMeta(data.meta ?? null);
       useRoomStore.getState().setServerOffsetMs(data.serverTime - Date.now());
 
       // Save session so this browser remembers the user
@@ -216,6 +225,7 @@ export default function RoomPage() {
         baseServerTime: number;
         version: number;
       };
+      meta?: VideoMeta | null;
     }) => {
       useRoomStore.getState().updatePlayback({
         videoId: data.videoId,
@@ -225,6 +235,12 @@ export default function RoomPage() {
         version: data.state.version,
         updatedBy: (data.state as any).updatedBy ?? null,
       });
+      // Sunucudan gelen yeni videonun metası (süre + başlık + kanal).
+      useRoomStore.getState().setMeta(data.meta ?? null);
+    };
+
+    const handleVideoWatchlist = (videos: WatchedVideo[]) => {
+      useRoomStore.getState().setWatchlist(videos);
     };
 
     const handleChatMessage = (msg: ChatMessage) => {
@@ -284,6 +300,7 @@ export default function RoomPage() {
     socket.on('room:users:update', handleUsersUpdate);
     socket.on('playback:state', handlePlaybackState);
     socket.on('video:changed', handleVideoChanged);
+    socket.on('video:watchlist', handleVideoWatchlist);
     socket.on('chat:message', handleChatMessage);
     socket.on('system:message', handleSystemMessage);
     socket.on('user:joined', handleUserJoined);
@@ -297,6 +314,7 @@ export default function RoomPage() {
       socket.off('room:users:update', handleUsersUpdate);
       socket.off('playback:state', handlePlaybackState);
       socket.off('video:changed', handleVideoChanged);
+      socket.off('video:watchlist', handleVideoWatchlist);
       socket.off('chat:message', handleChatMessage);
       socket.off('system:message', handleSystemMessage);
       socket.off('user:joined', handleUserJoined);
@@ -526,11 +544,65 @@ export default function RoomPage() {
             </div>
           </div>
 
-          {/* Chat Panel */}
+          {/* Right Panel — Chat + Watch list tabs */}
           <div className="w-full lg:w-80 xl:w-96 shrink-0">
-            <ChatPanel />
+            <RightPanel />
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Right Panel — Sohbet / İzlenenler sekmeli panel
+// ============================================================
+function RightPanel() {
+  const [tab, setTab] = useState<'chat' | 'watchlist'>('chat');
+  const watchlistCount = useRoomStore((s) => s.watchlist.length);
+
+  return (
+    <div className="bg-bg-panel border-[3px] border-white/5 rounded-3xl flex flex-col h-[calc(100vh-7rem)] lg:h-[calc(100vh-6rem)] shadow-cartoon-card overflow-hidden">
+      {/* Tab bar */}
+      <div className="flex border-b-[3px] border-white/5">
+        <button
+          onClick={() => setTab('chat')}
+          className={`flex-1 px-4 py-3 flex items-center justify-center gap-2 font-extrabold text-sm transition-all duration-200 ${
+            tab === 'chat'
+              ? 'text-red-main border-b-[3px] border-red-main -mb-[3px] bg-red-main/5'
+              : 'text-text-muted hover:text-text-main'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          Sohbet
+        </button>
+        <button
+          onClick={() => setTab('watchlist')}
+          className={`flex-1 px-4 py-3 flex items-center justify-center gap-2 font-extrabold text-sm transition-all duration-200 ${
+            tab === 'watchlist'
+              ? 'text-red-main border-b-[3px] border-red-main -mb-[3px] bg-red-main/5'
+              : 'text-text-muted hover:text-text-main'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+          </svg>
+          İzlenenler
+          {watchlistCount > 0 && (
+            <span className="text-xs bg-bg-card text-text-muted px-2 py-0.5 rounded-lg font-bold border border-white/5">
+              {watchlistCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Tab content */}
+      <div className="flex-1 flex flex-col min-h-0">
+        {tab === 'chat' ? <ChatPanel embedded /> : <WatchList />}
       </div>
     </div>
   );

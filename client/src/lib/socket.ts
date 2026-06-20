@@ -39,6 +39,28 @@ export function disconnectSocket() {
 
 // --- Event Types ---
 
+// YouTube video metadata (sunucu-taraflı fetch, Redis cache'li).
+// durationSeconds yalnızca Data API ile gelir; yoksa null (istemci fallback).
+export interface VideoMeta {
+  videoId: string;
+  title: string | null;
+  channel: string | null;
+  durationSeconds: number | null;
+  thumbnail: string | null;
+  fetchedAt: number;
+}
+
+// Oda bazlı izlenen-videolar listesi elemanı (watch list).
+export interface WatchedVideo {
+  videoId: string;
+  title: string | null;
+  channel: string | null;
+  durationSeconds: number | null;
+  thumbnail: string | null;
+  addedBy: { id: string; displayName: string };
+  addedAt: number;
+}
+
 export interface PublicRoomSummary {
   id: string;
   name: string;
@@ -51,6 +73,7 @@ export interface PublicRoomSummary {
     status: string;
     version: number;
   };
+  meta?: VideoMeta | null;
 }
 
 export interface RoomUser {

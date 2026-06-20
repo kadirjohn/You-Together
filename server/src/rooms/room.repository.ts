@@ -1,6 +1,6 @@
 import { getRedis, RedisKeys } from '../redis/client.js';
 import { config } from '../config.js';
-import type { RoomRecord, RoomUser, ChatMessage, RoomPlaybackState } from './room.types.js';
+import type { RoomRecord, RoomUser, ChatMessage, RoomPlaybackState, WatchedVideo } from './room.types.js';
 import { now } from '../utils/time.js';
 
 export function roomRepository() {
@@ -19,6 +19,7 @@ export function roomRepository() {
       pipeline.expire(RedisKeys.roomUsers(room.id), config.roomActiveTtlSeconds);
       pipeline.expire(RedisKeys.roomChat(room.id), config.roomActiveTtlSeconds);
       pipeline.expire(RedisKeys.roomPin(room.id), config.roomActiveTtlSeconds);
+      pipeline.expire(RedisKeys.roomVideos(room.id), config.roomActiveTtlSeconds);
       await pipeline.exec();
     },
 
@@ -39,6 +40,7 @@ export function roomRepository() {
         redis.del(RedisKeys.roomUsers(roomId)),
         redis.del(RedisKeys.roomChat(roomId)),
         redis.del(RedisKeys.roomPin(roomId)),
+        redis.del(RedisKeys.roomVideos(roomId)),
       ]);
     },
 
@@ -47,6 +49,7 @@ export function roomRepository() {
       await redis.expire(RedisKeys.roomUsers(roomId), ttlSeconds);
       await redis.expire(RedisKeys.roomChat(roomId), ttlSeconds);
       await redis.expire(RedisKeys.roomPin(roomId), ttlSeconds);
+      await redis.expire(RedisKeys.roomVideos(roomId), ttlSeconds);
     },
 
     async updatePlaybackState(
@@ -146,12 +149,72 @@ export function roomRepository() {
       return messages;
     },
 
-    async getAllRooms(): Promise<RoomRecord[]> {
-      const keys = await redis.keys('room:*');
-      const roomKeys = keys.filter(
-        (k) =>
-          !k.includes(':users') && !k.includes(':chat') && !k.includes(':pin'),
+    // --- Watch list (partide izlenen videolar) ---
+
+    async getWatchedVideos(roomId: string): Promise<WatchedVideo[]> {
+      const raw = await redis.get(RedisKeys.roomVideos(roomId));
+      if (!raw) return [];
+      try {
+        return JSON.parse(raw) as WatchedVideo[];
+      } catch {
+        return [];
+      }
+    },
+
+    // Videoyu izlenenler listesine ekle. Aynı videoId zaten varsa en üste taşı
+    // (addedAt/addedBy güncelle) — "en son izlenenler üstte" sıralaması + duplikasyon önler.
+    async addWatchedVideo(roomId: string, video: WatchedVideo): Promise<WatchedVideo[]> {
+      const videos = await this.getWatchedVideos(roomId);
+      const existingIdx = videos.findIndex((v) => v.videoId === video.videoId);
+      if (existingIdx >= 0) {
+        // En üste taşımak için önce çıkarıp sona ekle (listenin sonu = en yeni)
+        videos.splice(existingIdx, 1);
+      }
+      videos.push(video);
+      // Üst sınırı aşarsa en eskileri (baştan) kaydır
+      if (videos.length > config.watchlistMaxVideos) {
+        videos.splice(0, videos.length - config.watchlistMaxVideos);
+      }
+      await redis.set(
+        RedisKeys.roomVideos(roomId),
+        JSON.stringify(videos),
+        'EX',
+        config.roomActiveTtlSeconds,
       );
+      return videos;
+    },
+
+    async clearWatchedVideos(roomId: string): Promise<void> {
+      await redis.del(RedisKeys.roomVideos(roomId));
+    },
+
+    async getAllRooms(): Promise<RoomRecord[]> {
+      // SCAN (imleç tabanlı) — production Redis'inde KES'in O(N) bloklama
+      // operasyonundan kaçınır. Küçük ölçekte fark etmez ama ölçeklenirken güvenli.
+      const roomKeys: string[] = [];
+      let cursor = '0';
+      do {
+        // ioredis SCAN döne: [nextCursor, keys[]]
+        const [nextCursor, batch] = await redis.scan(
+          cursor,
+          'MATCH',
+          'room:*',
+          'COUNT',
+          200,
+        );
+        cursor = nextCursor;
+        for (const key of batch) {
+          // users / chat / pin / videos sub-key'lerini ele
+          if (
+            !key.includes(':users') &&
+            !key.includes(':chat') &&
+            !key.includes(':pin') &&
+            !key.includes(':videos')
+          ) {
+            roomKeys.push(key);
+          }
+        }
+      } while (cursor !== '0');
 
       if (roomKeys.length === 0) return [];
 

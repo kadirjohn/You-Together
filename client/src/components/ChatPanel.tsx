@@ -3,7 +3,7 @@ import { getSocket } from '../lib/socket';
 import { useRoomStore } from '../stores/room.store';
 import { useUIStore } from '../stores/ui.store';
 
-export default function ChatPanel() {
+export default function ChatPanel({ embedded = false }: { embedded?: boolean }) {
   const messages = useRoomStore((s) => s.chatMessages);
   const room = useRoomStore((s) => s.room);
   const currentUser = useRoomStore((s) => s.currentUser);
@@ -51,16 +51,18 @@ export default function ChatPanel() {
   };
 
   return (
-    <div className="bg-bg-panel border-[3px] border-white/5 rounded-3xl flex flex-col h-[calc(100vh-7rem)] lg:h-[calc(100vh-6rem)] shadow-cartoon-card">
-      {/* Header */}
-      <div className="px-4 py-3 border-b-[3px] border-white/5 flex items-center gap-2">
-        <svg className="w-5 h-5 text-red-main" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-          <path strokeLinecap="round" strokeLinejoin="round"
-            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-        <span className="font-extrabold text-text-main text-sm">Sohbet</span>
-        <span className="text-xs text-text-muted bg-bg-card px-2 py-0.5 rounded-lg font-bold border border-white/5">{messages.length}</span>
-      </div>
+    <div className={`flex flex-col flex-1 min-h-0 ${embedded ? '' : 'bg-bg-panel border-[3px] border-white/5 rounded-3xl h-[calc(100vh-7rem)] lg:h-[calc(100vh-6rem)] shadow-cartoon-card'}`}>
+      {/* Header (yalnızca standalone modda — embedded'da tab bar gösterir) */}
+      {!embedded && (
+        <div className="px-4 py-3 border-b-[3px] border-white/5 flex items-center gap-2">
+          <svg className="w-5 h-5 text-red-main" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          <span className="font-extrabold text-text-main text-sm">Sohbet</span>
+          <span className="text-xs text-text-muted bg-bg-card px-2 py-0.5 rounded-lg font-bold border border-white/5">{messages.length}</span>
+        </div>
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2">

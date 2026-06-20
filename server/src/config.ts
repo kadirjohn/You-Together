@@ -13,6 +13,11 @@ export const config = {
   pinMinLength: parseInt(process.env.PIN_MIN_LENGTH || '4', 10),
   pinMaxLength: parseInt(process.env.PIN_MAX_LENGTH || '12', 10),
   corsOrigins: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5173'],
+  // YouTube metadata fetch (opsiyonel API key). Boşsa oEmbed fallback çalışır.
+  youtubeApiKey: process.env.YOUTUBE_API_KEY || '',
+  youtubeCacheTtlSeconds: parseInt(process.env.YOUTUBE_CACHE_TTL_SECONDS || '604800', 10),
+  // Per-oda izlenen videolar listesi üst sınırı (watch list)
+  watchlistMaxVideos: parseInt(process.env.WATCHLIST_MAX_VIDEOS || '50', 10),
 } as const;
 
 export type Config = typeof config;
