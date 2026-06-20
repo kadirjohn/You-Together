@@ -5,7 +5,7 @@ import { useRoomStore } from '../stores/room.store';
 import { useUIStore } from '../stores/ui.store';
 import { getSession, saveSession, clearSession } from '../lib/session';
 import type { PublicRoomState, RoomUser, ChatMessage, SyncTarget, VideoMeta, WatchedVideo } from '../lib/socket';
-import YouTubePlayer from '../components/YouTubePlayer';
+import YouTubePlayer, { SyncBadge } from '../components/YouTubePlayer';
 import ChatPanel from '../components/ChatPanel';
 import VideoInputBar from '../components/VideoInputBar';
 import UserList from '../components/UserList';
@@ -188,8 +188,15 @@ export default function RoomPage() {
     };
 
     const handleRoomError = (data: { message: string }) => {
+      // Join akışı: PIN ekranında hata yazısı olarak göster.
       setJoinError(data.message);
       setJoining(false);
+      // Katılmış kullanıcı: oda-içi işlemlerden gelen hataları (ör. member pause
+      // reddedildiğinde "Sadece admin...") toast olarak göster — joinError state'i
+      // artık görünür değil.
+      if (useRoomStore.getState().currentUser) {
+        addToast(data.message, 'warning');
+      }
     };
 
     const handleUsersUpdate = (users: RoomUser[]) => {
@@ -279,9 +286,13 @@ export default function RoomPage() {
       );
       useRoomStore.getState().setUsers(updated);
 
-      // Update session if it's the current user
+      // Update currentUser + session if it's the current user.
+      // setCurrentUser şart — yoksa promosyon/demosyon alan kullanıcının isAdmin
+      // değeri (YouTubePlayer'da rol bazlı emit gate'i + UserList buton gate'i)
+      // sayfa yeniden yüklenene kadar eski kalır.
       const currentUser = useRoomStore.getState().currentUser;
       if (currentUser && data.userId === currentUser.id) {
+        useRoomStore.getState().setCurrentUser({ ...currentUser, role: data.role as RoomUser['role'] });
         const session = getSession();
         if (session) {
           saveSession({ ...session, role: data.role as RoomUser['role'] });
@@ -521,6 +532,13 @@ export default function RoomPage() {
           <div className="flex-1 min-w-0">
             {/* Admin Video Input */}
             <VideoInputBar />
+
+            {/* Senkron badge — player'ın hemen üstünde, sağa yaslı.
+                Player içinde değil ki native tuşları (kalite/altyazı/fullscreen)
+                engellemesin. */}
+            <div className="flex justify-end mb-2 min-h-[28px]">
+              <SyncBadge />
+            </div>
 
             {/* Player */}
             <div className="relative bg-black rounded-3xl overflow-hidden border-[3px] border-white/5 aspect-video shadow-cartoon-card">

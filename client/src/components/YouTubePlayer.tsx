@@ -10,17 +10,20 @@ interface YouTubePlayerProps {
   videoId: string | null;
 }
 
-// YouTube iframe embed with custom admin control bar.
+// YouTube iframe embed with NATIVE YouTube controls.
+// Her izleyici kendi penceresinde kalite/dil/altyazı değiştirebilir (yerel, senkronu
+// bozmaz — onStateChange tetiklemez). Pause/seek senkron olduğundan yalnızca admin
+// yapabilir — enforcement sunucu-taraflı: member pause/seek emit eder, sunucu reddeder
+// ve sync:command ile odayı geri assert eder (client snap-back).
 // YouTube's postMessage API (onReady, onStateChange, infoDelivery) is unreliable
 // on ngrok/localhost — events never arrive. Strategy:
-//   1. Custom control bar for admin/owner: Play/Pause toggle + timeline slider + fullscreen
+//   1. Native YouTube control bar (controls=1) — kalite/dil/altyazı yerel menü
 //   2. Own time tracking via 250ms interval (replaces YouTube infoDelivery)
-//   3. Admin actions → sendCommand + socket emit → server broadcast → all clients sync
+//   3. onStateChange → socket emit (playback:play/pause) herkes için; sunucu admin
+//      değilse reddeder + sync:command ile geri çeker
 //   4. Initial sync: timeout fallback → sync:request → sync:command (seekTo + play/pause)
 //   5. Muted autoplay fallback for browser autoplay policy
-//   6. "Oynat" button as last-resort fallback when autoplay is blocked
-//   7. controls=0 hides YouTube's own UI — our custom bar replaces it
-//   8. Click overlay blocks YouTube's native click-to-play/pause for admin
+//   6. controls=1: YouTube'un kendi arayüzü (duraklat/slider/kalite/altyazı/fullscreen)
 export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -31,8 +34,6 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   // Keep refs in sync with latest store/state values
   const roomIdFromStore = useRoomStore((s) => s.room?.id);
   roomIdRef.current = roomIdFromStore;
-  const currentUser = useRoomStore((s) => s.currentUser);
-  const isAdmin = currentUser?.role === 'owner' || currentUser?.role === 'admin';
   const addToast = useUIStore((s) => s.addToast);
   addToastRef.current = addToast;
   // Sunucu-taraflı video metası (süre + başlık + kanal). Birincil süre kaynağı.
@@ -42,8 +43,16 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   const [playerReady, setPlayerReady] = useState(false);
   const [userManuallySeeked, setUserManuallySeeked] = useState(false);
   const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
+  // Video bitti (state 0 / ended) — YouTube'un "More videos" öneri panelini
+  // fiziksel kaplamak + tıklamayı engellemek için overlay gösteririz. Bu panel
+  // cross-origin iframe içinde olduğundan tıklamayı yakalayıp video:change'e
+  // çeviremeyiz; bunun yerine paneli gizler, video değişimini yalnızca
+  // admin/owner VideoInputBar/WatchList üzerinden (zaten admin-gate'li) tutarız.
+  const [videoEnded, setVideoEnded] = useState(false);
   const [uiPlaying, setUiPlaying] = useState(false);
   const [uiTime, setUiTime] = useState(0);
+  // Kendi fullscreen durumumuz (container div'i fullscreen ederiz, iframe'i değil).
+  // YouTube'un kendi fullscreen'ı fs=0 ile kapalı — oradan "More videos" paneli çıkıyordu.
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Player state tracking (all via refs for permanent listener access)
@@ -63,14 +72,22 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   const listenerAttached = useRef(false);
   const timeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoplayRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Video bitti ref'i — 250ms interval'in stale-closure'ından etkilenmeden
+  // süre bazlı video-sonu tespiti için (postMessage state 0 güvenilmez).
+  const videoEndedRef = useRef(false);
 
   // Build embed URL once
   const embedUrl = useMemo(() => {
     if (!videoId) return '';
     const origin = encodeURIComponent(window.location.origin);
-    // vq=hd1080 sets default quality to highest available (up to 1080p).
-    // Runtime quality change requires postMessage API which is unreliable.
-    return `${YT_ORIGIN}/embed/${videoId}?enablejsapi=1&origin=${origin}&widget_referrer=${origin}&modestbranding=1&rel=0&iv_load_policy=3&autoplay=0&controls=0&fs=0&vq=hd1080`;
+    // controls=1: YouTube'un native arayüzü (duraklat/slider/kalite/altyazı/dil).
+    // fs=0: YouTube'un KENDİ fullscreen butonu kapalı. Sebep: YouTube fullscreen
+    // modunda "More videos" öneri panelini (12 video) gösterir ve bu panel cross-origin
+    // iframe içinde olduğundan gizlenemez. Bunun yerine fullscreen'i kendi container'ımızda
+    // yaparız (iframe kapsayan div'i fullscreen eder) — o zaman YouTube "embed" modunda
+    // kalır, fullscreen More videos paneli çıkmaz; native play/pause/kalite/altyazı korunur.
+    // enablejsapi=1 sync için (postMessage). vq=hd1080 default kalite.
+    return `${YT_ORIGIN}/embed/${videoId}?enablejsapi=1&origin=${origin}&widget_referrer=${origin}&modestbranding=1&rel=0&iv_load_policy=3&autoplay=0&controls=1&fs=0&vq=hd1080`;
   }, [videoId]);
 
   // Get live current time (interpolated from our own timer)
@@ -82,49 +99,77 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     return ps.currentTime;
   }, []);
 
-  // Send command to iframe via postMessage
-  const sendCommand = useCallback((func: string, args: any[] = []) => {
+  // YouTube iframe'ına postMessage komutu gönderir — tek tek değil, küçük
+  // bir kuyruk + dedup ile. Arka arkaya seekTo+playVideo+unMute gibi komutlar
+  // YouTube player'ı çökertiyordu (siyah ekran + "An error occurred"). Aynı
+  // func için arka arkaya gelen komutlardan en sonuncusunu tutarız (ör. çok
+  // hızlı seekTo'lar birleşir) ve komutlar arasında ~120ms bırakırız ki player
+  // nefes alsın. setImmediate-benzeri mikro-gecikme (setTimeout 0) komut
+  // sırasını korur ama player'ı boğmaz.
+  const commandQueue = useRef<{ func: string; args: any[] }[]>([]);
+  const commandFlushScheduled = useRef(false);
+  const flushCommands = useCallback(() => {
+    commandFlushScheduled.current = false;
     const iframe = iframeRef.current;
-    if (!iframe?.contentWindow) return;
-    const id = ++commandId.current;
-    iframe.contentWindow.postMessage(
-      JSON.stringify({ event: 'command', func, args, id: `cmd_${id}` }),
-      YT_ORIGIN,
-    );
+    if (!iframe?.contentWindow) { commandQueue.current = []; return; }
+    // Aynı func'tan arka arkaya gelenleri en sonuncusuyla birleştir (sırayı koru).
+    const deduped: { func: string; args: any[] }[] = [];
+    for (const cmd of commandQueue.current) {
+      const last = deduped[deduped.length - 1];
+      if (last && last.func === cmd.func) {
+        last.args = cmd.args; // aynı komut: en son argümanla değiştir
+      } else {
+        deduped.push({ ...cmd });
+      }
+    }
+    commandQueue.current = [];
+    for (const cmd of deduped) {
+      const id = ++commandId.current;
+      iframe.contentWindow.postMessage(
+        JSON.stringify({ event: 'command', func: cmd.func, args: cmd.args, id: `cmd_${id}` }),
+        YT_ORIGIN,
+      );
+    }
   }, []);
+  const sendCommand = useCallback((func: string, args: any[] = []) => {
+    commandQueue.current.push({ func, args });
+    if (commandFlushScheduled.current) return;
+    commandFlushScheduled.current = true;
+    setTimeout(flushCommands, 0);
+  }, [flushCommands]);
 
-  // Fullscreen toggle
+  // Native player'da autoplay politika workaround'una (mute→play→unMute dansı)
+  // gerek yok — controls=1 ile native play butonu var ve kullanıcı tıklayınca
+  // video oynar. Bu fonksiyon yalnızca senkron amaçlı playVideo yapar; mute/unMute
+  // dansı YouTube player'ı komut çakışmasında çökertiyordu (siyah ekran +
+  // "An error occurred"). Sade ve tek komut.
+  const startPlayback = useCallback(() => {
+    sendCommand('playVideo');
+    playerState.current.playing = true;
+    playerState.current.lastTimeUpdate = Date.now();
+    setUiPlaying(true);
+    return true;
+  }, [sendCommand]);
+
+  // Kendi fullscreen toggle'ımız — container div'i fullscreen eder (iframe'i değil).
+  // YouTube'un kendi fullscreen butonu fs=0 ile kapalı; oradan fullscreen "More videos"
+  // öneri paneli çıkıyordu (cross-origin iframe, gizlenemez). Container fullscreen'da
+  // YouTube embed modunda kalır, panel çıkmaz; native play/pause/kalite/altyazı korunur.
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
     if (document.fullscreenElement) {
       document.exitFullscreen();
     } else {
-      el.requestFullscreen();
+      el.requestFullscreen?.();
     }
   }, []);
 
-  // Listen for fullscreen changes
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handler);
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
-
-  // Muted autoplay helper
-  const tryMutedAutoplay = useCallback(() => {
-    sendCommand('mute');
-    playerState.current.muted = true;
-    sendCommand('playVideo');
-    setTimeout(() => {
-      sendCommand('unMute');
-      playerState.current.muted = false;
-    }, 800);
-    playerState.current.playing = true;
-    playerState.current.lastTimeUpdate = Date.now();
-    setUiPlaying(true);
-    return true;
-  }, [sendCommand]);
 
   // Own time tracking timer
   useEffect(() => {
@@ -139,6 +184,16 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       }
       setUiPlaying(playerState.current.playing);
       setUiTime(getLiveTime());
+      // Video sonu tespiti — postMessage (onStateChange state 0) ngrok/localhost'ta
+      // güvenilmez olduğu için süre bazlı yedek: currentTime süreye ulaşınca
+      // videoEnded overlay'i göster (YouTube "More videos" panelini kaplar).
+      const live = getLiveTime();
+      const dur = videoDuration.current;
+      if (dur && dur > 0 && live >= dur - 0.5 && !videoEndedRef.current) {
+        videoEndedRef.current = true;
+        playerState.current.playing = false;
+        setVideoEnded(true);
+      }
     }, 250);
     return () => { if (timeTimerRef.current) { clearInterval(timeTimerRef.current); timeTimerRef.current = null; } };
   }, [playerReady, videoId]);
@@ -172,7 +227,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
           playerState.current.lastTimeUpdate = Date.now();
           lastLocalTime.current = targetTime;
           lastCheckTime.current = Date.now();
-          if (playback.status === 'playing') { tryMutedAutoplay(); }
+          if (playback.status === 'playing') { startPlayback(); }
           else if (playback.status === 'paused') { sendCommand('pauseVideo'); playerState.current.playing = false; }
           setTimeout(() => { applyingRemoteUpdate.current = false; }, 500);
         } else {
@@ -190,16 +245,33 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       if (data.event === 'onStateChange') {
         const state = data.info ?? data.data;
         const storeState = useRoomStore.getState();
-        if (state === 1) {
-          setBuffering(false); setNeedsUserInteraction(false);
+        // Pause/seek senkron olduğundan yalnızca admin oynatma durumunu sunucuya
+        // emit eder. Member native pause/seek yaparsa emit edilmez — drift loop
+        // member'ı oynatılan konuma geri çeker. Bu, sunucu reassert döngüsünü
+        // (kararsız player / siyah ekran) önler. Listener bir kez attach
+        // edildiği için rolü store'dan canlı okuruz (mount anındaki frozen
+        // değer değil).
+        const role = storeState.currentUser?.role;
+        const canControl = role === 'owner' || role === 'admin';
+        if (state === 0) {
+          // Video bitti — YouTube "More videos" öneri panelini gösterir. Bu panel
+          // cross-origin iframe içinde olduğundan tıklamayı yakalayamayız; bunun
+          // yerine videoEnded overlay'i ile paneli fiziksel kaplar + tıklamayı
+          // engelleriz. Video değişimi yalnızca admin/owner VideoInputBar/WatchList
+          // üzerinden (sunucu admin-gate'li).
+          playerState.current.playing = false; playerState.current.lastTimeUpdate = Date.now();
+          videoEndedRef.current = true; setVideoEnded(true);
+        } else if (state === 1) {
+          setBuffering(false); setNeedsUserInteraction(false); setVideoEnded(false);
+          videoEndedRef.current = false;
           playerState.current.playing = true;
-          if (!applyingRemoteUpdate.current && !storeState.applyingRemoteUpdate) {
+          if (!applyingRemoteUpdate.current && canControl) {
             const rid = roomIdRef.current;
             if (rid) getSocket().emit('playback:play', { roomId: rid, currentTime: getLiveTime(), clientEventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}` });
           }
         } else if (state === 2) {
           playerState.current.playing = false; playerState.current.lastTimeUpdate = Date.now();
-          if (!applyingRemoteUpdate.current && !storeState.applyingRemoteUpdate) {
+          if (!applyingRemoteUpdate.current && canControl) {
             const rid = roomIdRef.current;
             if (rid) getSocket().emit('playback:pause', { roomId: rid, currentTime: getLiveTime(), clientEventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}` });
           }
@@ -207,6 +279,9 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
           setBuffering(true); useRoomStore.getState().setSyncStatus('buffering'); playerState.current.playing = false;
           const rid = roomIdRef.current;
           if (rid) getSocket().emit('client:buffering', { roomId: rid });
+        } else if (state === 5) {
+          // Cued — yeni video yüklendi, ended overlay'i kapat.
+          videoEndedRef.current = false; setVideoEnded(false);
         }
         return;
       }
@@ -239,8 +314,8 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
 
   // Timeout fallback
   useEffect(() => {
-    if (!videoId) { setPlayerReady(false); setNeedsUserInteraction(false); initialSyncDone.current = false; return; }
-    setPlayerReady(false); setBuffering(false); setNeedsUserInteraction(false); initialSyncDone.current = false;
+    if (!videoId) { setPlayerReady(false); setNeedsUserInteraction(false); setVideoEnded(false); videoEndedRef.current = false; initialSyncDone.current = false; return; }
+    setPlayerReady(false); setBuffering(false); setNeedsUserInteraction(false); setVideoEnded(false); videoEndedRef.current = false; initialSyncDone.current = false;
     playerState.current = { playing: false, currentTime: 0, lastTimeUpdate: 0, muted: false };
     lastLocalTime.current = 0; lastCheckTime.current = Date.now(); videoDuration.current = null;
     if (syncFallbackTimer.current) { clearTimeout(syncFallbackTimer.current); syncFallbackTimer.current = null; }
@@ -263,7 +338,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       applyingRemoteUpdate.current = true;
       try {
         if (typeof data.targetTime === 'number') { sendCommand('seekTo', [data.targetTime, true]); playerState.current.currentTime = data.targetTime; playerState.current.lastTimeUpdate = Date.now(); }
-        if (data.status === 'playing') { tryMutedAutoplay(); setUiPlaying(true); }
+        if (data.status === 'playing') { startPlayback(); setUiPlaying(true); }
         else if (data.status === 'paused') { sendCommand('pauseVideo'); playerState.current.playing = false; setUiPlaying(false); setNeedsUserInteraction(false); }
         useRoomStore.getState().setLastRemoteVersion(data.version || 0);
         setUserManuallySeeked(false);
@@ -273,7 +348,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     };
     socket.on('sync:command', handleSyncCommand);
     return () => { socket.off('sync:command', handleSyncCommand); };
-  }, [roomIdFromStore, sendCommand, tryMutedAutoplay]);
+  }, [roomIdFromStore, sendCommand, startPlayback]);
 
   // Drift sync loop
   useEffect(() => {
@@ -288,11 +363,17 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       const elapsed = (now - lastCheckTime.current) / 1000;
       const expectedLocal = lastLocalTime.current + (playerState.current.playing ? elapsed : 0);
       const jump = Math.abs(localTime - expectedLocal);
-      if (jump > 3 && lastLocalTime.current > 0 && !isRemoteSyncing.current) { setUserManuallySeeked(true); }
+      // userManuallySeeked yalnızca admin için: admin kendi seek/pause'unu sunucuya
+      // emit eder (oda durumu güncellenir, drift oluşmaz). Member native pause/seek
+      // yaparsa emit edilmez (yukarıdaki gate) — drift loop onu geri çekmeli, bu
+      // yüzden member için userManuallySeeked setlenmez (geri çekmeye engel olur).
+      const myRole = state.currentUser?.role;
+      const iAmAdmin = myRole === 'owner' || myRole === 'admin';
+      if (jump > 3 && lastLocalTime.current > 0 && !isRemoteSyncing.current && iAmAdmin) { setUserManuallySeeked(true); }
       lastLocalTime.current = localTime; lastCheckTime.current = now;
       tickCount++;
       if (tickCount % 2 !== 0) return;
-      if (userManuallySeeked) { useRoomStore.getState().setSyncStatus('slightly-off'); return; }
+      if (userManuallySeeked && iAmAdmin) { useRoomStore.getState().setSyncStatus('slightly-off'); return; }
       const expectedTime = computeExpectedRoomTime(
         { baseTime: state.room.playback.baseTime, baseServerTime: state.room.playback.baseServerTime, status: state.room.playback.status },
         state.serverOffsetMs,
@@ -301,10 +382,18 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       const absDrift = Math.abs(drift);
       if (absDrift <= 1.5) { useRoomStore.getState().setSyncStatus('synced'); return; }
       if (absDrift <= 2.5) { useRoomStore.getState().setSyncStatus('slightly-off'); return; }
+      // Member native duraklatmış/sarmış olabilir: drift oda durumuna göre büyür.
+      // Geri çek: seekTo + oda playing ise playVideo (member duraklatılmışken
+      // oynatmaya döndür). Komutlar throttled sendCommand ile birleştiği için
+      // seekTo+playVideo çakışması YouTube'u çökertmez. Admin pause broadcast'le
+      // tüm odada paused olur → admin tarafında drift oluşmaz.
+      const roomPlaying = state.room.playback.status === 'playing';
       if (absDrift <= 3) {
         useRoomStore.getState().setSyncStatus('slightly-off');
         isRemoteSyncing.current = true; applyingRemoteUpdate.current = true;
         sendCommand('seekTo', [expectedTime, true]);
+        if (roomPlaying) { sendCommand('playVideo'); playerState.current.playing = true; }
+        else { sendCommand('pauseVideo'); playerState.current.playing = false; }
         playerState.current.currentTime = expectedTime; playerState.current.lastTimeUpdate = Date.now();
         lastLocalTime.current = expectedTime; lastCheckTime.current = Date.now();
         setTimeout(() => { applyingRemoteUpdate.current = false; isRemoteSyncing.current = false; }, 1500);
@@ -313,6 +402,8 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       useRoomStore.getState().setSyncStatus('resyncing');
       isRemoteSyncing.current = true; applyingRemoteUpdate.current = true;
       sendCommand('seekTo', [expectedTime, true]);
+      if (roomPlaying) { sendCommand('playVideo'); playerState.current.playing = true; }
+      else { sendCommand('pauseVideo'); playerState.current.playing = false; }
       playerState.current.currentTime = expectedTime; playerState.current.lastTimeUpdate = Date.now();
       lastLocalTime.current = expectedTime; lastCheckTime.current = Date.now();
       const toast = addToastRef.current;
@@ -341,6 +432,13 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     if (!playback?.videoId || playback.baseServerTime <= 0) return;
     const myUserId = state.currentUser?.id;
     if (myUserId && playback.updatedBy === myUserId) return;
+    // Yeni oynatma başladı (version arttı) — "Video bitti" overlay'i kapat.
+    // Aynı videoId replay (WatchList'ten tekrar oynat) durumunda videoId
+    // değişmediği için timeout fallback tetiklenmez; version artışı overlay'i
+    // kapatır.
+    if (playback.status === 'playing' || playback.baseTime === 0) {
+      videoEndedRef.current = false; setVideoEnded(false);
+    }
     const targetTime = computeExpectedRoomTime(
       { baseTime: playback.baseTime, baseServerTime: playback.baseServerTime, status: playback.status },
       state.serverOffsetMs,
@@ -350,7 +448,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     playerState.current.currentTime = targetTime; playerState.current.lastTimeUpdate = Date.now();
     lastLocalTime.current = targetTime; lastCheckTime.current = Date.now();
     if (playback.status === 'playing') {
-      tryMutedAutoplay(); setUiPlaying(true);
+      startPlayback(); setUiPlaying(true);
       if (autoplayRetryTimer.current) clearTimeout(autoplayRetryTimer.current);
       autoplayRetryTimer.current = setTimeout(() => { if (!playerState.current.playing) setNeedsUserInteraction(true); }, 2000);
     } else if (playback.status === 'paused') {
@@ -360,42 +458,6 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     setTimeout(() => { applyingRemoteUpdate.current = false; isRemoteSyncing.current = false; }, 1500);
   }, [playbackVersion]);
 
-  // Admin control handlers
-  const handleAdminPlay = useCallback(() => {
-    const rid = roomIdRef.current; if (!rid) return;
-    const time = getLiveTime();
-    applyingRemoteUpdate.current = true;
-    sendCommand('playVideo');
-    playerState.current.playing = true; playerState.current.lastTimeUpdate = Date.now();
-    setUiPlaying(true); setNeedsUserInteraction(false);
-    getSocket().emit('playback:play', { roomId: rid, currentTime: time, clientEventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}` });
-    setTimeout(() => { applyingRemoteUpdate.current = false; }, 500);
-  }, [sendCommand, getLiveTime]);
-
-  const handleAdminPause = useCallback(() => {
-    const rid = roomIdRef.current; if (!rid) return;
-    const time = getLiveTime();
-    applyingRemoteUpdate.current = true;
-    sendCommand('pauseVideo');
-    playerState.current.playing = false; playerState.current.currentTime = time; playerState.current.lastTimeUpdate = Date.now();
-    setUiPlaying(false); setUiTime(time);
-    getSocket().emit('playback:pause', { roomId: rid, currentTime: time, clientEventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}` });
-    setTimeout(() => { applyingRemoteUpdate.current = false; }, 500);
-  }, [sendCommand, getLiveTime]);
-
-  const handleAdminSeek = useCallback((targetTime: number) => {
-    const rid = roomIdRef.current; if (!rid) return;
-    applyingRemoteUpdate.current = true;
-    sendCommand('seekTo', [targetTime, true]);
-    sendCommand('playVideo');
-    playerState.current.currentTime = targetTime; playerState.current.lastTimeUpdate = Date.now();
-    playerState.current.playing = true;
-    lastLocalTime.current = targetTime; lastCheckTime.current = Date.now();
-    setUiPlaying(true); setUiTime(targetTime); setNeedsUserInteraction(false);
-    getSocket().emit('playback:seek', { roomId: rid, targetTime, shouldPlay: true, clientEventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}` });
-    setTimeout(() => { applyingRemoteUpdate.current = false; }, 500);
-  }, [sendCommand]);
-
   const handleRejoinRoom = useCallback(() => {
     const rid = roomIdRef.current; if (!rid) return;
     applyingRemoteUpdate.current = true;
@@ -403,16 +465,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     setTimeout(() => { applyingRemoteUpdate.current = false; setUserManuallySeeked(false); }, 1000);
   }, [getLiveTime]);
 
-  const handleUserPlay = useCallback(() => {
-    sendCommand('playVideo');
-    playerState.current.playing = true; playerState.current.lastTimeUpdate = Date.now();
-    setUiPlaying(true); setNeedsUserInteraction(false);
-  }, [sendCommand]);
-
   if (!videoId || !embedUrl) return null;
-
-  const isPlaying = uiPlaying;
-  const displayTime = uiTime;
 
   return (
     <div ref={containerRef} className="relative w-full h-full group">
@@ -424,16 +477,9 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
         title="YouTube video player"
       />
 
-      {/* Click overlay — blocks YouTube's native click-to-play/pause for admin.
-          Captures all clicks so iframe never receives them.
-          Our buttons (higher z-index + pointer-events-auto) still work. */}
-      {isAdmin && (
-        <div className="absolute inset-0 z-5" />
-      )}
-
-      {/* Buffering overlay */}
+      {/* Buffering overlay — native YouTube çubuğunun üzerinde, sadece yüklenirken */}
       {buffering && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10 pointer-events-none">
           <div className="text-center">
             <div className="w-8 h-8 border-2 border-red-main border-t-transparent rounded-full animate-spin mx-auto mb-3" />
             <p className="text-text-main text-sm">Bağlantın videoyu yüklemeye çalışıyor...</p>
@@ -441,24 +487,51 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
         </div>
       )}
 
-      {/* "Oynat" button — shown when autoplay is blocked */}
-      {needsUserInteraction && !buffering && playerReady && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm z-20">
-          <button
-            onClick={handleUserPlay}
-            className="pointer-events-auto px-8 py-4 bg-red-main text-white font-bold text-lg rounded-2xl
-              glow-red hover:glow-red transition-all duration-300
-              hover:bg-red-soft active:scale-[0.98] shadow-xl flex items-center gap-3"
-          >
-            <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-            Videoyu Oynat
-          </button>
+      {/* Kendi fullscreen butonumuz — sol üst köşede (YouTube native sağ-üst kontrolleriyle
+          çakışmaz). YouTube'un kendi fullscreen butonu fs=0 ile kapalı (oradan "More videos"
+          paneli çıkıyordu). Container div'i fullscreen eder — YouTube embed modunda kalır,
+          panel çıkmaz. pointer-events-auto, hover'da görünür. */}
+      {playerReady && !buffering && !videoEnded && (
+        <button
+          onClick={toggleFullscreen}
+          className="absolute top-3 left-3 z-10 pointer-events-auto w-9 h-9 flex items-center justify-center rounded-full
+            bg-black/50 hover:bg-black/70 backdrop-blur-md text-white transition-all duration-200
+            opacity-0 group-hover:opacity-100 focus:opacity-100 shadow-lg"
+          title={isFullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
+          aria-label={isFullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
+        >
+          {isFullscreen ? (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 0v12" />
+            </svg>
+          ) : (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
+            </svg>
+          )}
+        </button>
+      )}
+
+      {/* Video bitti — YouTube'un "More videos" öneri panelini kaplayan overlay.
+          Panel cross-origin iframe içinde olduğundan tıklamayı yakalayıp video:change'e
+          çeviremeyiz; bu yüzden paneli fiziksel gizler + tıklamayı engelleriz
+          (pointer-events-auto ile iframe'e iletilmez). Video değişimi yalnızca
+          admin/owner VideoInputBar/WatchList üzerinden (sunucu admin-gate'li). */}
+      {videoEnded && !buffering && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/85 backdrop-blur-sm z-20 pointer-events-auto animate-fade-in">
+          <div className="text-center px-6">
+            <div className="text-5xl mb-3 animate-float">🎬</div>
+            <p className="text-text-main text-lg font-bold">Video bitti</p>
+            <p className="text-text-muted text-sm mt-2 font-semibold">
+              Yeni bir video başlatmak için adminin/odanın sahibinin yeni bir YouTube linki eklemesi gerek.
+            </p>
+          </div>
         </div>
       )}
 
-      {/* Manual seek rejoin button */}
+      {/* Manual seek rejoin button — member native timeline'ı sarayıp drift oluşunca */}
       {userManuallySeeked && !buffering && (
-        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10 animate-fade-in">
+        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10 animate-fade-in">
           <button onClick={handleRejoinRoom}
             className="pointer-events-auto px-5 py-3 bg-red-main text-white font-semibold rounded-xl
               glow-red hover:glow-red transition-all duration-300
@@ -470,242 +543,16 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
           </button>
         </div>
       )}
-
-      {/* Sync badge */}
-      <SyncBadge />
-
-      {/* Center play/pause overlay — large button for admin, hover to reveal */}
-      {isAdmin && playerReady && !buffering && (
-        <div className="absolute inset-0 flex items-center justify-center z-15 pointer-events-none">
-          <button
-            onClick={isPlaying ? handleAdminPause : handleAdminPlay}
-            className="pointer-events-auto w-16 h-16 flex items-center justify-center rounded-full
-              bg-black/40 hover:bg-black/60 backdrop-blur-md transition-all duration-200
-              text-white opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100
-              shadow-[0_0_20px_rgba(255,255,255,0.25)] hover:shadow-[0_0_30px_rgba(255,255,255,0.4)]"
-            title={isPlaying ? 'Durdur' : 'Oynat'}
-          >
-            {isPlaying ? (
-              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" /></svg>
-            ) : (
-              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-            )}
-          </button>
-        </div>
-      )}
-
-      {/* Admin control bar — always visible for owner/admin */}
-      {isAdmin && playerReady && (
-        <AdminControlBar
-          isPlaying={isPlaying}
-          currentTime={displayTime}
-          duration={videoDuration.current}
-          isFullscreen={isFullscreen}
-          onPlay={handleAdminPlay}
-          onPause={handleAdminPause}
-          onSeek={handleAdminSeek}
-          onToggleFullscreen={toggleFullscreen}
-        />
-      )}
-
-      {/* Member progress bar — salt-okunur, yalnızca gösterim (Bölüm 3.3) */}
-      {!isAdmin && playerReady && (
-        <MemberProgressBar currentTime={displayTime} duration={videoDuration.current} />
-      )}
     </div>
   );
 }
 
 // ============================================================
-// Admin Control Bar — Play/Pause + slider + fullscreen + time tooltip
+// Sync Badge — player DIŞINDA, player'ın hemen üstünde render edilir
+// (RoomPage'de player container'ın üzerinde). Player içindeki native
+// tuşları (kalite/altyazı/fullscreen) engellememesi için burada değil.
 // ============================================================
-function AdminControlBar({
-  isPlaying, currentTime, duration, isFullscreen,
-  onPlay, onPause, onSeek, onToggleFullscreen,
-}: {
-  isPlaying: boolean; currentTime: number; duration: number | null; isFullscreen: boolean;
-  onPlay: () => void; onPause: () => void; onSeek: (time: number) => void; onToggleFullscreen: () => void;
-}) {
-  const [sliderValue, setSliderValue] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const [hoverTime, setHoverTime] = useState<number | null>(null);
-  const [hoverX, setHoverX] = useState(0);
-  const sliderRef = useRef<HTMLInputElement>(null);
-  const draggingValueRef = useRef(0);
-
-  useEffect(() => { if (!isDragging) setSliderValue(currentTime); }, [currentTime, isDragging]);
-
-  const formatTime = (seconds: number): string => {
-    const s = Math.max(0, Math.floor(seconds));
-    const m = Math.floor(s / 60); const sec = s % 60;
-    return `${m}:${sec.toString().padStart(2, '0')}`;
-  };
-
-  // Süre biliniyorsa onu kullan; bilinmiyorsa akıllı fallback (sabit 120dk değil):
-  // akışkan timeline için currentTime + 60 (min 300). Süre gelince slider max güncellenir.
-  const sliderMax = duration && duration > 0 ? duration : Math.max(currentTime + 60, 300);
-  const durationKnown = duration != null && duration > 0;
-
-  const getSliderTimeFromEvent = (e: React.MouseEvent | React.TouchEvent): number => {
-    const rect = sliderRef.current?.getBoundingClientRect();
-    if (!rect) return 0;
-    const clientX = 'touches' in e ? e.touches[0]?.clientX ?? 0 : e.clientX;
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return ratio * sliderMax;
-  };
-
-  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    setSliderValue(val); draggingValueRef.current = val;
-  };
-
-  const handleSliderMouseMove = (e: React.MouseEvent) => {
-    const t = getSliderTimeFromEvent(e);
-    setHoverTime(t);
-    setHoverX('touches' in e ? 0 : e.clientX);
-  };
-
-  const handleSliderMouseLeave = () => { setHoverTime(null); };
-
-  const handleSliderDown = (e: React.MouseEvent | React.TouchEvent) => {
-    setIsDragging(true);
-    const t = getSliderTimeFromEvent(e);
-    setSliderValue(t); draggingValueRef.current = t;
-  };
-
-  const handleSliderUp = () => {
-    setIsDragging(false);
-    onSeek(draggingValueRef.current);
-  };
-
-  return (
-    <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-auto
-      bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 py-3 opacity-100">
-      {/* Timeline slider with time tooltip */}
-      <div className="relative mb-2">
-        {/* Time preview tooltip */}
-        {hoverTime !== null && !isDragging && (
-          <div
-            className="absolute bottom-full mb-2 -translate-x-1/2 px-2 py-1 bg-black/80 text-white text-xs rounded-md font-mono whitespace-nowrap pointer-events-none"
-            style={{ left: `${((hoverTime / sliderMax) * 100).toFixed(1)}%` }}
-          >
-            {formatTime(hoverTime)}
-          </div>
-        )}
-        <input
-          ref={sliderRef}
-          type="range" min={0} max={sliderMax} step={0.5}
-          value={sliderValue}
-          onChange={handleSliderChange}
-          onMouseDown={handleSliderDown}
-          onMouseUp={handleSliderUp}
-          onMouseMove={handleSliderMouseMove}
-          onMouseLeave={handleSliderMouseLeave}
-          onTouchStart={handleSliderDown}
-          onTouchEnd={handleSliderUp}
-          className="w-full h-1.5 appearance-none bg-white/20 rounded-full cursor-pointer
-            [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5
-            [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-red-main
-            [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:cursor-grab
-            [&::-webkit-slider-thumb]:active:cursor-grabbing
-            [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5
-            [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-red-main
-            [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-grab"
-        />
-      </div>
-
-      {/* Controls row */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {/* Play/Pause toggle */}
-          <button onClick={isPlaying ? onPause : onPlay}
-            className="w-9 h-9 flex items-center justify-center rounded-full
-              bg-white/10 hover:bg-white/20 transition-colors text-white"
-            title={isPlaying ? 'Durdur' : 'Oynat'}>
-            {isPlaying ? (
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" /></svg>
-            ) : (
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-            )}
-          </button>
-
-          {/* Time display */}
-          <span className="text-white/80 text-sm font-mono tabular-nums">
-            {formatTime(currentTime)} / {durationKnown ? formatTime(sliderMax) : '--:--'}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Fullscreen toggle */}
-          <button onClick={onToggleFullscreen}
-            className="w-8 h-8 flex items-center justify-center rounded-full
-              bg-white/10 hover:bg-white/20 transition-colors text-white/70 hover:text-white"
-            title={isFullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}>
-            {isFullscreen ? (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 0v12" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
-              </svg>
-            )}
-          </button>
-
-          {/* Admin label */}
-          <span className="text-white/40 text-xs font-medium tracking-wide uppercase">Admin</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Member Progress Bar — salt-okunur, yalnızca gösterim (Bölüm 3.3)
-// Member'lar play/pause kontrolü görmez ama progress + süre görebilir.
-// ============================================================
-function MemberProgressBar({
-  currentTime,
-  duration,
-}: {
-  currentTime: number;
-  duration: number | null;
-}) {
-  const sliderMax = duration && duration > 0 ? duration : Math.max(currentTime + 60, 300);
-  const durationKnown = duration != null && duration > 0;
-  const pct = Math.max(0, Math.min(100, (currentTime / sliderMax) * 100));
-
-  const formatTime = (seconds: number): string => {
-    const s = Math.max(0, Math.floor(seconds));
-    const m = Math.floor(s / 60); const sec = s % 60;
-    return `${m}:${sec.toString().padStart(2, '0')}`;
-  };
-
-  return (
-    <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none
-      bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 py-3">
-      {/* Progress track (salt-okunur) */}
-      <div className="relative mb-2 h-1.5 w-full rounded-full bg-white/20 overflow-hidden">
-        <div
-          className="absolute top-0 left-0 h-full rounded-full bg-red-main"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      {/* Time display */}
-      <div className="flex items-center justify-between">
-        <span className="text-white/80 text-sm font-mono tabular-nums">
-          {formatTime(currentTime)} / {durationKnown ? formatTime(sliderMax) : '--:--'}
-        </span>
-        <span className="text-white/40 text-xs font-medium tracking-wide uppercase">İzleyici</span>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Sync Badge
-// ============================================================
-function SyncBadge() {
+export function SyncBadge() {
   const syncStatus = useRoomStore((s) => s.syncStatus);
   const playerReady = useRoomStore((s) => s.playerReady);
   const room = useRoomStore((s) => s.room);
@@ -718,8 +565,10 @@ function SyncBadge() {
     idle: { label: 'Bekleniyor', color: 'bg-white/5 text-text-muted border-white/10' },
   };
   const { label, color } = config[syncStatus] || config.idle;
+  // Player DIŞINDA, player'ın hemen üstünde render edilir (RoomPage).
+  // absolute positioning yok — normal akışta, sağa yaslı inline badge.
   return (
-    <div className={`absolute top-3 right-3 z-10 px-3 py-1.5 rounded-full text-xs font-semibold border ${color} backdrop-blur-sm transition-all duration-300`}>
+    <div className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold border ${color} backdrop-blur-sm transition-all duration-300 self-end`}>
       {label}
     </div>
   );

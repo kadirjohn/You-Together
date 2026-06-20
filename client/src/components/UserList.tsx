@@ -8,7 +8,7 @@ export default function UserList() {
   const currentUser = useRoomStore((s) => s.currentUser);
   const { addToast } = useUIStore();
 
-  const isOwner = currentUser?.role === 'owner';
+  const isAdmin = currentUser?.role === 'owner' || currentUser?.role === 'admin';
 
   const handleGrantAdmin = (targetUserId: string) => {
     if (!room) return;
@@ -78,8 +78,8 @@ export default function UserList() {
               {roleBadge(user.role)}
             </div>
 
-            {/* Admin controls for owner */}
-            {isOwner && user.id !== currentUser?.id && user.role !== 'owner' && (
+            {/* Yetki yönetimi — admin + sahip (owner olmayan hedeflere) */}
+            {isAdmin && user.id !== currentUser?.id && user.role !== 'owner' && (
               <div className="hidden group-hover:flex items-center gap-1 ml-1">
                 {user.role === 'member' ? (
                   <button

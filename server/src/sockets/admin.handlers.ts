@@ -33,7 +33,7 @@ export function registerAdminHandlers(socket: Socket) {
     if (!mapping || mapping.roomId !== roomId) return;
 
     const requester = await repo.getUser(roomId, mapping.userId);
-    if (!requester || requester.role !== RoomRole.Owner) {
+    if (!requester || (requester.role !== RoomRole.Owner && requester.role !== RoomRole.Admin)) {
       socket.emit('room:error', { message: 'Bu işlem için yetkiniz yok.' });
       return;
     }
@@ -80,7 +80,7 @@ export function registerAdminHandlers(socket: Socket) {
     if (!mapping || mapping.roomId !== roomId) return;
 
     const requester = await repo.getUser(roomId, mapping.userId);
-    if (!requester || requester.role !== RoomRole.Owner) {
+    if (!requester || (requester.role !== RoomRole.Owner && requester.role !== RoomRole.Admin)) {
       socket.emit('room:error', { message: 'Bu işlem için yetkiniz yok.' });
       return;
     }

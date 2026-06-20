@@ -6,6 +6,7 @@ import {
   syncRequestSchema,
   playerReadySchema,
   PlaybackStatus,
+  RoomRole,
 } from '../rooms/room.types.js';
 import type { RoomPlaybackState } from '../rooms/room.types.js';
 import { now, computeCurrentRoomTime } from '../utils/time.js';
@@ -29,6 +30,24 @@ export function registerPlaybackHandlers(socket: Socket) {
 
     const mapping = await repo.getSocketUserMap(socket.id);
     if (!mapping || mapping.roomId !== roomId) return;
+
+    // Yetkilendirme: pause/seek senkron olduğu için yalnızca owner/admin
+    // oynatma durumunu değiştirebilir. Member reddedilir ve odanın gerçek
+    // durumu bu socket'e geri assert edilir (sync:command → client snap-back).
+    const requester = await repo.getUser(roomId, mapping.userId);
+    if (!requester || (requester.role !== RoomRole.Owner && requester.role !== RoomRole.Admin)) {
+      const targetTime = computeCurrentRoomTime(room.playback);
+      socket.emit('sync:command', {
+        type: 'reassert',
+        videoId: room.playback.videoId,
+        targetTime,
+        status: room.playback.status,
+        version: room.playback.version,
+        serverTime: now(),
+      });
+      socket.emit('room:error', { message: 'Sadece admin oynat, duraklat veya atla yapabilir.' });
+      return;
+    }
 
     // Rate limit
     const key = `playback:${socket.id}`;
@@ -70,6 +89,22 @@ export function registerPlaybackHandlers(socket: Socket) {
     const mapping = await repo.getSocketUserMap(socket.id);
     if (!mapping || mapping.roomId !== roomId) return;
 
+    // Yetkilendirme: yalnızca owner/admin duraklatabilir. Member reddedilir.
+    const requester = await repo.getUser(roomId, mapping.userId);
+    if (!requester || (requester.role !== RoomRole.Owner && requester.role !== RoomRole.Admin)) {
+      const targetTime = computeCurrentRoomTime(room.playback);
+      socket.emit('sync:command', {
+        type: 'reassert',
+        videoId: room.playback.videoId,
+        targetTime,
+        status: room.playback.status,
+        version: room.playback.version,
+        serverTime: now(),
+      });
+      socket.emit('room:error', { message: 'Sadece admin oynat, duraklat veya atla yapabilir.' });
+      return;
+    }
+
     const playback: RoomPlaybackState = {
       ...room.playback,
       status: PlaybackStatus.Paused,
@@ -103,6 +138,22 @@ export function registerPlaybackHandlers(socket: Socket) {
 
     const mapping = await repo.getSocketUserMap(socket.id);
     if (!mapping || mapping.roomId !== roomId) return;
+
+    // Yetkilendirme: yalnızca owner/admin atlama yapabilir. Member reddedilir.
+    const requester = await repo.getUser(roomId, mapping.userId);
+    if (!requester || (requester.role !== RoomRole.Owner && requester.role !== RoomRole.Admin)) {
+      const targetTime = computeCurrentRoomTime(room.playback);
+      socket.emit('sync:command', {
+        type: 'reassert',
+        videoId: room.playback.videoId,
+        targetTime,
+        status: room.playback.status,
+        version: room.playback.version,
+        serverTime: now(),
+      });
+      socket.emit('room:error', { message: 'Sadece admin oynat, duraklat veya atla yapabilir.' });
+      return;
+    }
 
     const playback: RoomPlaybackState = {
       ...room.playback,
