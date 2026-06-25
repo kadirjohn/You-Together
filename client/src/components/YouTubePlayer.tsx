@@ -2,159 +2,221 @@ import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { getSocket } from '../lib/socket';
 import { useRoomStore } from '../stores/room.store';
 import { useUIStore } from '../stores/ui.store';
-import { computeExpectedRoomTime } from '../lib/time';
-
-const YT_ORIGIN = 'https://www.youtube.com';
+import { computeExpectedRoomTime, calculateMedian } from '../lib/time';
 
 interface YouTubePlayerProps {
   videoId: string | null;
 }
 
-// YouTube iframe embed with NATIVE YouTube controls.
-// Her izleyici kendi penceresinde kalite/dil/altyazı değiştirebilir (yerel, senkronu
-// bozmaz — onStateChange tetiklemez). Pause/seek senkron olduğundan yalnızca admin
-// yapabilir — enforcement sunucu-taraflı: member pause/seek emit eder, sunucu reddeder
-// ve sync:command ile odayı geri assert eder (client snap-back).
-// YouTube's postMessage API (onReady, onStateChange, infoDelivery) is unreliable
-// on ngrok/localhost — events never arrive. Strategy:
-//   1. Native YouTube control bar (controls=1) — kalite/dil/altyazı yerel menü
-//   2. Own time tracking via 250ms interval (replaces YouTube infoDelivery)
-//   3. onStateChange → socket emit (playback:play/pause) herkes için; sunucu admin
-//      değilse reddeder + sync:command ile geri çeker
-//   4. Initial sync: timeout fallback → sync:request → sync:command (seekTo + play/pause)
-//   5. Muted autoplay fallback for browser autoplay policy
-//   6. controls=1: YouTube'un kendi arayüzü (duraklat/slider/kalite/altyazı/fullscreen)
+// YouTube IFrame Player API SDK ile senkron oynatıcı (Faz 1 — sync düzeltmesi).
+//
+// Önceki sürüm raw postMessage + enablejsapi kullanıyordu; kodun kendi
+// yorumları bu olayların ngrok/localhost'ta "asla gelmediğini" itiraf
+// ediyordu → sync tamamen ölü. Üstelik yerel süre serbest-sayan bir sayaçtı
+// (her 250ms +0.25) ve gerçek getCurrentTime() HİÇ okunmuyordu → sync
+// saatleri senkronize ediyordu, video konumlarını değil.
+//
+// Bu sürüm resmi YT.Player SDK'yı kullanır (onReady/onStateChange güvenilir),
+// GERÇEK getCurrentTime() değerini 500ms'de bir okur, her saniye sunucuya
+// heartbeat olarak gönderir, sunucudan gelen playback:tsmap ile lider
+// (admin) konumuna göre drift düzeltir (dynamic playback rate 1.0→1.1x).
+// Admin native timeline'ı sararsa jump detection bunu yakalayıp gerçek
+// hedef zamanla playback:seek emit eder.
+//
+// Kontrol modeli: admin/owner oynat/duraklat/atla yapar (sunucu-gate'li).
+// Member native kontroller yerel kalır, emit edilmez; drift düzeltme onları
+// lidere geri çeker (bozuk reassert loop yerine).
 export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const playerDivRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<YT.Player | null>(null);
   const roomIdRef = useRef<string | undefined>();
   const addToastRef = useRef<(msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void>();
-  const commandId = useRef(0);
 
   // Keep refs in sync with latest store/state values
   const roomIdFromStore = useRoomStore((s) => s.room?.id);
   roomIdRef.current = roomIdFromStore;
   const addToast = useUIStore((s) => s.addToast);
   addToastRef.current = addToast;
-  // Sunucu-taraflı video metası (süre + başlık + kanal). Birincil süre kaynağı.
   const meta = useRoomStore((s) => s.meta);
 
   const [buffering, setBuffering] = useState(false);
   const [playerReady, setPlayerReady] = useState(false);
-  const [userManuallySeeked, setUserManuallySeeked] = useState(false);
-  const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
-  // Video bitti (state 0 / ended) — YouTube'un "More videos" öneri panelini
-  // fiziksel kaplamak + tıklamayı engellemek için overlay gösteririz. Bu panel
-  // cross-origin iframe içinde olduğundan tıklamayı yakalayıp video:change'e
-  // çeviremeyiz; bunun yerine paneli gizler, video değişimini yalnızca
-  // admin/owner VideoInputBar/WatchList üzerinden (zaten admin-gate'li) tutarız.
   const [videoEnded, setVideoEnded] = useState(false);
   const [uiPlaying, setUiPlaying] = useState(false);
   const [uiTime, setUiTime] = useState(0);
-  // Kendi fullscreen durumumuz (container div'i fullscreen ederiz, iframe'i değil).
-  // YouTube'un kendi fullscreen'ı fs=0 ile kapalı — oradan "More videos" paneli çıkıyordu.
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Player state tracking (all via refs for permanent listener access)
-  const playerState = useRef({
-    playing: false,
-    currentTime: 0,
-    lastTimeUpdate: 0,
-    muted: false,
-  });
+  // --- Senkron state (refs — kalıcı listener erişimi için) ---
+  // Gerçek oynatma zamanı (getCurrentTime poll'undan anchor). Serbest sayaç DEĞİL.
+  const realTimeRef = useRef(0); // son poll'dan gelen gerçek getCurrentTime
+  const realTimeAtRef = useRef(0); // realTimeRef'in okunduğu Date.now() (interpolasyon)
   const videoDuration = useRef<number | null>(null);
-  const lastLocalTime = useRef(0);
-  const lastCheckTime = useRef(Date.now());
   const applyingRemoteUpdate = useRef(false);
-  const isRemoteSyncing = useRef(false);
+  const remoteGuardUntil = useRef(0); // onStateChange echo'larını bastır (bounce guard)
+  const ytDebounce = useRef(true); // 500ms lockout (watchparty)
   const initialSyncDone = useRef(false);
-  const syncFallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const listenerAttached = useRef(false);
-  const timeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const autoplayRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Video bitti ref'i — 250ms interval'in stale-closure'ından etkilenmeden
-  // süre bazlı video-sonu tespiti için (postMessage state 0 güvenilmez).
+  const lastSeekCheckTime = useRef(0); // admin seek-jump detection için
+  const lastSeekCheckRealTime = useRef(0);
+  const lastAppliedPlaybackRate = useRef(1); // drift düzeltme rate değişimi dedup
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const onReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoEndedRef = useRef(false);
 
-  // Build embed URL once
-  const embedUrl = useMemo(() => {
-    if (!videoId) return '';
-    const origin = encodeURIComponent(window.location.origin);
-    // controls=1: YouTube'un native arayüzü (duraklat/slider/kalite/altyazı/dil).
-    // fs=0: YouTube'un KENDİ fullscreen butonu kapalı. Sebep: YouTube fullscreen
-    // modunda "More videos" öneri panelini (12 video) gösterir ve bu panel cross-origin
-    // iframe içinde olduğundan gizlenemez. Bunun yerine fullscreen'i kendi container'ımızda
-    // yaparız (iframe kapsayan div'i fullscreen eder) — o zaman YouTube "embed" modunda
-    // kalır, fullscreen More videos paneli çıkmaz; native play/pause/kalite/altyazı korunur.
-    // enablejsapi=1 sync için (postMessage). vq=hd1080 default kalite.
-    return `${YT_ORIGIN}/embed/${videoId}?enablejsapi=1&origin=${origin}&widget_referrer=${origin}&modestbranding=1&rel=0&iv_load_policy=3&autoplay=0&controls=1&fs=0&vq=hd1080`;
-  }, [videoId]);
-
-  // Get live current time (interpolated from our own timer)
-  const getLiveTime = useCallback((): number => {
-    const ps = playerState.current;
-    if (ps.playing && ps.lastTimeUpdate > 0) {
-      return ps.currentTime + (Date.now() - ps.lastTimeUpdate) / 1000;
-    }
-    return ps.currentTime;
-  }, []);
-
-  // YouTube iframe'ına postMessage komutu gönderir — tek tek değil, küçük
-  // bir kuyruk + dedup ile. Arka arkaya seekTo+playVideo+unMute gibi komutlar
-  // YouTube player'ı çökertiyordu (siyah ekran + "An error occurred"). Aynı
-  // func için arka arkaya gelen komutlardan en sonuncusunu tutarız (ör. çok
-  // hızlı seekTo'lar birleşir) ve komutlar arasında ~120ms bırakırız ki player
-  // nefes alsın. setImmediate-benzeri mikro-gecikme (setTimeout 0) komut
-  // sırasını korur ama player'ı boğmaz.
-  const commandQueue = useRef<{ func: string; args: any[] }[]>([]);
-  const commandFlushScheduled = useRef(false);
-  const flushCommands = useCallback(() => {
-    commandFlushScheduled.current = false;
-    const iframe = iframeRef.current;
-    if (!iframe?.contentWindow) { commandQueue.current = []; return; }
-    // Aynı func'tan arka arkaya gelenleri en sonuncusuyla birleştir (sırayı koru).
-    const deduped: { func: string; args: any[] }[] = [];
-    for (const cmd of commandQueue.current) {
-      const last = deduped[deduped.length - 1];
-      if (last && last.func === cmd.func) {
-        last.args = cmd.args; // aynı komut: en son argümanla değiştir
-      } else {
-        deduped.push({ ...cmd });
+  // SDK scriptini bir kez yükle. window.onYouTubeIframeAPIReady tek seferlik
+  // global callback — birden fazla component instance'u varsa sadece ilki
+  // çağrılır. Promise ile sarmalayıp herkesin beklemesini sağlıyoruz.
+  const ytReadyPromiseRef = useRef<Promise<void> | null>(null);
+  const loadYouTubeSDK = useCallback((): Promise<void> => {
+    if (ytReadyPromiseRef.current) return ytReadyPromiseRef.current;
+    ytReadyPromiseRef.current = new Promise<void>((resolve) => {
+      if (window.YT && window.YT.Player) {
+        resolve();
+        return;
       }
-    }
-    commandQueue.current = [];
-    for (const cmd of deduped) {
-      const id = ++commandId.current;
-      iframe.contentWindow.postMessage(
-        JSON.stringify({ event: 'command', func: cmd.func, args: cmd.args, id: `cmd_${id}` }),
-        YT_ORIGIN,
-      );
+      const prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        prev?.();
+        resolve();
+      };
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      document.body.append(tag);
+    });
+    return ytReadyPromiseRef.current;
+  }, []);
+
+  // Gerçek getCurrentTime — interpolasyonlu (≤500ms eski poll'a anchor).
+  // Serbest sayaç DEĞİL: gerçek YouTube pozisyonuna bağlı.
+  const getLiveTime = useCallback((): number => {
+    const player = playerRef.current;
+    if (!player) return realTimeRef.current;
+    try {
+      // SDK her zaman gerçek değeri döndürür; poll'lar arası pürüzsüzlük için
+      // interpolasyon ekle ama 500ms'yi aşmasın (buffering'de sapmasın).
+      const base = realTimeRef.current;
+      const since = (Date.now() - realTimeAtRef.current) / 1000;
+      const roomStatus = useRoomStore.getState().roomPlaybackStatus;
+      if (roomStatus === 'playing' && since < 0.6) {
+        return base + since * lastAppliedPlaybackRate.current;
+      }
+      return base;
+    } catch {
+      return realTimeRef.current;
     }
   }, []);
-  const sendCommand = useCallback((func: string, args: any[] = []) => {
-    commandQueue.current.push({ func, args });
-    if (commandFlushScheduled.current) return;
-    commandFlushScheduled.current = true;
-    setTimeout(flushCommands, 0);
-  }, [flushCommands]);
 
-  // Native player'da autoplay politika workaround'una (mute→play→unMute dansı)
-  // gerek yok — controls=1 ile native play butonu var ve kullanıcı tıklayınca
-  // video oynar. Bu fonksiyon yalnızca senkron amaçlı playVideo yapar; mute/unMute
-  // dansı YouTube player'ı komut çakışmasında çökertiyordu (siyah ekran +
-  // "An error occurred"). Sade ve tek komut.
+  // --- Player komut yardımcıları (SDK doğrudan çağrı) ---
+  const safeCall = useCallback(<T,>(fn: () => T): T | undefined => {
+    const player = playerRef.current;
+    if (!player) return undefined;
+    try {
+      return fn();
+    } catch {
+      return undefined;
+    }
+  }, []);
+
   const startPlayback = useCallback(() => {
-    sendCommand('playVideo');
-    playerState.current.playing = true;
-    playerState.current.lastTimeUpdate = Date.now();
+    safeCall(() => playerRef.current?.playVideo());
     setUiPlaying(true);
-    return true;
-  }, [sendCommand]);
+  }, [safeCall]);
 
-  // Kendi fullscreen toggle'ımız — container div'i fullscreen eder (iframe'i değil).
-  // YouTube'un kendi fullscreen butonu fs=0 ile kapalı; oradan fullscreen "More videos"
-  // öneri paneli çıkıyordu (cross-origin iframe, gizlenemez). Container fullscreen'da
-  // YouTube embed modunda kalır, panel çıkmaz; native play/pause/kalite/altyazı korunur.
+  const pausePlayback = useCallback(() => {
+    safeCall(() => playerRef.current?.pauseVideo());
+    setUiPlaying(false);
+  }, [safeCall]);
+
+  const seekTo = useCallback((time: number) => {
+    if (!Number.isFinite(time) || time < 0) return;
+    safeCall(() => playerRef.current?.seekTo(time, true));
+    realTimeRef.current = time;
+    realTimeAtRef.current = Date.now();
+  }, [safeCall]);
+
+  // --- Merkezi remote state uygulayıcı (hem event-driven hem poll'da) ---
+  // Bounce guard: önce roomPlaybackStatus set edilir, sonra player'a komut
+  // verilir; böylece onStateChange echo'su re-emit etmez.
+  const applyRemoteState = useCallback((
+    status: 'playing' | 'paused' | 'idle',
+    time: number,
+    guardMs: number = 700,
+  ) => {
+    applyingRemoteUpdate.current = true;
+    remoteGuardUntil.current = Date.now() + guardMs;
+    useRoomStore.getState().setRoomPlaybackStatus(status);
+    seekTo(Math.max(0, time));
+    if (status === 'playing') {
+      startPlayback();
+      setBuffering(false);
+    } else {
+      pausePlayback();
+      setBuffering(false);
+    }
+    // Catch-up rate'i sıfırla; liderin rate'i 1.0x
+    if (lastAppliedPlaybackRate.current !== 1) {
+      safeCall(() => playerRef.current?.setPlaybackRate(1));
+      lastAppliedPlaybackRate.current = 1;
+    }
+    // Guard penceresi bitince applyingRemoteUpdate false; ama seek sonrası
+    // BUFFERING uzun sürerse, BUFFERING onStateChange handler'ı guard'ı
+    // otomatik uzatır (kendi kendine resync döngüsünü kırar).
+    setTimeout(() => { applyingRemoteUpdate.current = false; }, guardMs);
+  }, [seekTo, startPlayback, pausePlayback, safeCall]);
+
+  // Guard penceresini uzat (seek sonrası buffering'de kullanılır).
+  const extendRemoteGuard = useCallback((extraMs: number) => {
+    remoteGuardUntil.current = Math.max(remoteGuardUntil.current, Date.now() + extraMs);
+  }, []);
+
+  // Admin liderinin gerçek konumuna zorla resync (hard seek + play/pause).
+  const resyncToLeader = useCallback(() => {
+    const state = useRoomStore.getState();
+    const roomStatus = state.roomPlaybackStatus;
+    const tsMap = state.tsMap;
+    const adminId = state.adminUserId;
+    let leader = 0;
+    if (adminId && typeof tsMap[adminId] === 'number') {
+      leader = tsMap[adminId];
+    } else if (Object.values(tsMap).length > 0) {
+      leader = Object.values(tsMap).length > 2
+        ? calculateMedian(Object.values(tsMap))
+        : Math.max(...Object.values(tsMap));
+    } else if (state.room?.playback) {
+      // tsMap boşsa authoritative state'ten extrapolate
+      leader = computeExpectedRoomTime(state.room.playback, state.serverOffsetMs);
+    }
+    if (leader <= 0 && roomStatus === 'idle') return;
+    applyRemoteState(roomStatus, leader, 900);
+  }, [applyRemoteState]);
+
+  // Gerçek player konumunun liderden ne kadar sapmış olduğunu ölç (onStateChange
+  // ve poll'da hızlı karar vermek için). threshold: saniye cinsinden kabul edilebilir
+  // maks sapma. Hem geride hem ileride olmak "out of sync" sayılır.
+  const isOutOfSync = useCallback((thresholdSeconds: number): boolean => {
+    const player = playerRef.current;
+    if (!player) return false;
+    const currentTime = safeCall(() => player.getCurrentTime()) ?? 0;
+    const state = useRoomStore.getState();
+    const tsMap = state.tsMap;
+    const adminId = state.adminUserId;
+    let leader: number | undefined;
+    if (adminId && typeof tsMap[adminId] === 'number') {
+      leader = tsMap[adminId];
+    } else if (Object.values(tsMap).length > 0) {
+      leader = Object.values(tsMap).length > 2
+        ? calculateMedian(Object.values(tsMap))
+        : Math.max(...Object.values(tsMap));
+    } else if (state.room?.playback) {
+      leader = computeExpectedRoomTime(state.room.playback, state.serverOffsetMs);
+    }
+    if (typeof leader !== 'number') return false;
+    return Math.abs(currentTime - leader) > thresholdSeconds;
+  }, [safeCall]);
+
+  // --- Custom fullscreen (container div) — YouTube fs=0; "More videos" paneli
+  // çıkmasın diye YouTube'un kendi fullscreen'ı kapalı, container'ı fullscreen ederiz. ---
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -171,252 +233,483 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
-  // Own time tracking timer
-  useEffect(() => {
-    if (!playerReady || !videoId) {
-      if (timeTimerRef.current) { clearInterval(timeTimerRef.current); timeTimerRef.current = null; }
-      return;
-    }
-    timeTimerRef.current = setInterval(() => {
-      if (playerState.current.playing && !applyingRemoteUpdate.current) {
-        playerState.current.currentTime += 0.25;
-        playerState.current.lastTimeUpdate = Date.now();
-      }
-      setUiPlaying(playerState.current.playing);
-      setUiTime(getLiveTime());
-      // Video sonu tespiti — postMessage (onStateChange state 0) ngrok/localhost'ta
-      // güvenilmez olduğu için süre bazlı yedek: currentTime süreye ulaşınca
-      // videoEnded overlay'i göster (YouTube "More videos" panelini kaplar).
-      const live = getLiveTime();
-      const dur = videoDuration.current;
-      if (dur && dur > 0 && live >= dur - 0.5 && !videoEndedRef.current) {
-        videoEndedRef.current = true;
-        playerState.current.playing = false;
-        setVideoEnded(true);
-      }
-    }, 250);
-    return () => { if (timeTimerRef.current) { clearInterval(timeTimerRef.current); timeTimerRef.current = null; } };
-  }, [playerReady, videoId]);
-
-  // PERMANENT message listener
-  useEffect(() => {
-    if (listenerAttached.current) return;
-    listenerAttached.current = true;
-
-    const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== YT_ORIGIN) return;
-      let data: any;
-      try { data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
-
-      if (data.event === 'onReady') {
-        if (syncFallbackTimer.current) { clearTimeout(syncFallbackTimer.current); syncFallbackTimer.current = null; }
-        setPlayerReady(true);
-        useRoomStore.getState().setPlayerReady(true);
-        setBuffering(false);
-        sendCommand('getDuration');
-        const storeState = useRoomStore.getState();
-        const playback = storeState.room?.playback;
-        if (playback?.videoId && playback.baseServerTime > 0) {
-          const targetTime = computeExpectedRoomTime(
-            { baseTime: playback.baseTime, baseServerTime: playback.baseServerTime, status: playback.status },
-            storeState.serverOffsetMs,
-          );
-          applyingRemoteUpdate.current = true;
-          sendCommand('seekTo', [targetTime, true]);
-          playerState.current.currentTime = targetTime;
-          playerState.current.lastTimeUpdate = Date.now();
-          lastLocalTime.current = targetTime;
-          lastCheckTime.current = Date.now();
-          if (playback.status === 'playing') { startPlayback(); }
-          else if (playback.status === 'paused') { sendCommand('pauseVideo'); playerState.current.playing = false; }
-          setTimeout(() => { applyingRemoteUpdate.current = false; }, 500);
-        } else {
-          playerState.current.currentTime = 0;
-          playerState.current.lastTimeUpdate = Date.now();
-          lastLocalTime.current = 0;
-          lastCheckTime.current = Date.now();
-        }
-        initialSyncDone.current = true;
-        const rid = roomIdRef.current;
-        if (rid) getSocket().emit('client:player-ready', { roomId: rid });
-        return;
-      }
-
-      if (data.event === 'onStateChange') {
-        const state = data.info ?? data.data;
-        const storeState = useRoomStore.getState();
-        // Pause/seek senkron olduğundan yalnızca admin oynatma durumunu sunucuya
-        // emit eder. Member native pause/seek yaparsa emit edilmez — drift loop
-        // member'ı oynatılan konuma geri çeker. Bu, sunucu reassert döngüsünü
-        // (kararsız player / siyah ekran) önler. Listener bir kez attach
-        // edildiği için rolü store'dan canlı okuruz (mount anındaki frozen
-        // değer değil).
-        const role = storeState.currentUser?.role;
-        const canControl = role === 'owner' || role === 'admin';
-        if (state === 0) {
-          // Video bitti — YouTube "More videos" öneri panelini gösterir. Bu panel
-          // cross-origin iframe içinde olduğundan tıklamayı yakalayamayız; bunun
-          // yerine videoEnded overlay'i ile paneli fiziksel kaplar + tıklamayı
-          // engelleriz. Video değişimi yalnızca admin/owner VideoInputBar/WatchList
-          // üzerinden (sunucu admin-gate'li).
-          playerState.current.playing = false; playerState.current.lastTimeUpdate = Date.now();
-          videoEndedRef.current = true; setVideoEnded(true);
-        } else if (state === 1) {
-          setBuffering(false); setNeedsUserInteraction(false); setVideoEnded(false);
-          videoEndedRef.current = false;
-          playerState.current.playing = true;
-          if (!applyingRemoteUpdate.current && canControl) {
-            const rid = roomIdRef.current;
-            if (rid) getSocket().emit('playback:play', { roomId: rid, currentTime: getLiveTime(), clientEventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}` });
-          }
-        } else if (state === 2) {
-          playerState.current.playing = false; playerState.current.lastTimeUpdate = Date.now();
-          if (!applyingRemoteUpdate.current && canControl) {
-            const rid = roomIdRef.current;
-            if (rid) getSocket().emit('playback:pause', { roomId: rid, currentTime: getLiveTime(), clientEventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}` });
-          }
-        } else if (state === 3) {
-          setBuffering(true); useRoomStore.getState().setSyncStatus('buffering'); playerState.current.playing = false;
-          const rid = roomIdRef.current;
-          if (rid) getSocket().emit('client:buffering', { roomId: rid });
-        } else if (state === 5) {
-          // Cued — yeni video yüklendi, ended overlay'i kapat.
-          videoEndedRef.current = false; setVideoEnded(false);
-        }
-        return;
-      }
-
-      if (data.event === 'infoDelivery' || data.info?.currentTime !== undefined) {
-        const info = data.info ?? data;
-        if (typeof info?.currentTime === 'number') { playerState.current.currentTime = info.currentTime; playerState.current.lastTimeUpdate = Date.now(); }
-        // Süre: sunucu metası birincil kaynaktır. Sunucu bilmiyorsa (null) postMessage
-        // yedek kaynaktır — ngrok/localhost'ta gelmez ama gelirse kullanılır.
-        if (videoDuration.current == null && typeof info?.duration === 'number' && info.duration > 0) { videoDuration.current = info.duration; }
-        if (typeof info?.muted === 'boolean') { playerState.current.muted = info.muted; }
-        if (info?.playerState === 1 || info?.currentTime !== undefined) { setNeedsUserInteraction(false); }
-        return;
-      }
-
-      if (data.event === 'onError') {
-        const errorCode = data.info ?? data.data;
-        const toast = addToastRef.current;
-        if (!toast) return;
-        if (errorCode === 101 || errorCode === 150) toast('Bu video gömülü oynatmaya izin vermiyor. Başka bir video deneyin.', 'error');
-        else if (errorCode === 100) toast('Bu video bulunamadı veya kaldırılmış.', 'error');
-        else if (errorCode === 5) toast('Video oynatılamadı. YouTube hesabınıza giriş yapıp tekrar deneyin.', 'error');
-        else toast('Video yüklenirken bir hata oluştu.', 'error');
-        return;
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
+  // --- Odaya/role live erişim için yardımcılar ---
+  const iAmAdmin = useCallback((): boolean => {
+    const role = useRoomStore.getState().currentUser?.role;
+    return role === 'owner' || role === 'admin';
   }, []);
 
-  // Timeout fallback
+  // --- Player kurulumu: SDK yükle → YT.Player oluştur (videoId değişince重建) ---
   useEffect(() => {
-    if (!videoId) { setPlayerReady(false); setNeedsUserInteraction(false); setVideoEnded(false); videoEndedRef.current = false; initialSyncDone.current = false; return; }
-    setPlayerReady(false); setBuffering(false); setNeedsUserInteraction(false); setVideoEnded(false); videoEndedRef.current = false; initialSyncDone.current = false;
-    playerState.current = { playing: false, currentTime: 0, lastTimeUpdate: 0, muted: false };
-    lastLocalTime.current = 0; lastCheckTime.current = Date.now(); videoDuration.current = null;
-    if (syncFallbackTimer.current) { clearTimeout(syncFallbackTimer.current); syncFallbackTimer.current = null; }
-    syncFallbackTimer.current = setTimeout(() => {
+    let cancelled = false;
+    if (!videoId) {
+      // Temizle
+      if (playerRef.current) {
+        try { playerRef.current?.destroy?.(); } catch { /* ignore */ }
+        playerRef.current = null;
+      }
+      setPlayerReady(false);
+      useRoomStore.getState().setPlayerReady(false);
+      initialSyncDone.current = false;
+      videoEndedRef.current = false;
+      setVideoEnded(false);
+      return;
+    }
+
+    // Reset state for new video
+    setPlayerReady(false);
+    setBuffering(false);
+    setVideoEnded(false);
+    videoEndedRef.current = false;
+    initialSyncDone.current = false;
+    realTimeRef.current = 0;
+    realTimeAtRef.current = Date.now();
+    videoDuration.current = null;
+    lastAppliedPlaybackRate.current = 1;
+
+    // 5s safety timeout (SDK onReady gelmezse fallback pull)
+    if (onReadyTimeoutRef.current) clearTimeout(onReadyTimeoutRef.current);
+    onReadyTimeoutRef.current = setTimeout(() => {
       if (initialSyncDone.current) return;
       const rid = roomIdRef.current;
       if (rid) getSocket().emit('sync:request', { roomId: rid, localTime: 0, playerState: 'desynced' });
-      setPlayerReady(true); useRoomStore.getState().setPlayerReady(true); initialSyncDone.current = true;
-      sendCommand('getDuration');
-    }, 3000);
-    return () => { if (syncFallbackTimer.current) { clearTimeout(syncFallbackTimer.current); syncFallbackTimer.current = null; } };
-  }, [videoId]);
+    }, 5000);
 
-  // sync:command listener
+    loadYouTubeSDK().then(() => {
+      if (cancelled || !playerDivRef.current) return;
+      // Eski player'ı temizle (yeni video)
+      if (playerRef.current) {
+        try { playerRef.current?.destroy?.(); } catch { /* ignore */ }
+        playerRef.current = null;
+      }
+
+      const origin = window.location.origin;
+      playerRef.current = new window.YT.Player(playerDivRef.current, {
+        videoId,
+        // widget_referrer @types/youtube'da yok ama YouTube runtime'da destekler;
+        // origin güvenliği için. Tip-dışı alanı any ile ekliyoruz.
+        playerVars: {
+          enablejsapi: 1,
+          origin,
+          modestbranding: 1,
+          rel: 0,
+          iv_load_policy: 3,
+          autoplay: 0,
+          controls: 1, // native YouTube arayüzü (duraklat/slider/kalite/altyazı)
+          fs: 0, // YouTube'un kendi fullscreen'ı kapalı (container fullscreen kullanırız)
+          playsinline: 1,
+          widget_referrer: origin,
+        } as YT.PlayerVars,
+        events: {
+          onReady: () => {
+            if (cancelled) return;
+            if (onReadyTimeoutRef.current) { clearTimeout(onReadyTimeoutRef.current); onReadyTimeoutRef.current = null; }
+            setPlayerReady(true);
+            useRoomStore.getState().setPlayerReady(true);
+            setBuffering(false);
+            const dur = safeCall(() => playerRef.current?.getDuration()) ?? 0;
+            if (dur > 0) videoDuration.current = dur;
+
+            // Initial sync: store'daki playback state'ten hedef konumu çöz.
+            // Mevcut oda durumu (geç katılan / sayfa yenileme) doğru konuma seek.
+            const state = useRoomStore.getState();
+            const playback = state.room?.playback;
+            const rid = roomIdRef.current;
+            initialSyncDone.current = true;
+            if (playback?.videoId && playback.baseServerTime > 0) {
+              const targetTime = computeExpectedRoomTime(
+                { baseTime: playback.baseTime, baseServerTime: playback.baseServerTime, status: playback.status },
+                state.serverOffsetMs,
+              );
+              applyRemoteState(
+                playback.status as 'playing' | 'paused' | 'idle',
+                Math.max(0, targetTime),
+                500,
+              );
+            } else {
+              useRoomStore.getState().setRoomPlaybackStatus(playback?.status as any ?? 'idle');
+            }
+            if (rid) getSocket().emit('client:player-ready', { roomId: rid });
+          },
+          onStateChange: (e: YT.OnStateChangeEvent) => {
+            if (cancelled) return;
+            const st = e.data;
+            const roomStatus = useRoomStore.getState().roomPlaybackStatus;
+            const admin = iAmAdmin();
+            const guardActive = Date.now() < remoteGuardUntil.current;
+
+            // videoEnded — SDK ENDED'i güvenilir teslim eder (raw postMessage'dan farklı)
+            if (st === YT.PlayerState.ENDED) {
+              videoEndedRef.current = true;
+              setVideoEnded(true);
+              setUiPlaying(false);
+              setBuffering(false);
+              return;
+            }
+            if (st === YT.PlayerState.CUED) {
+              setBuffering(false);
+              return;
+            }
+            if (st === YT.PlayerState.BUFFERING) {
+              // Buffering overlay sadece oda gerçekten oynuyorken gösterilir.
+              // Admin pause yaptığında roomStatus 'paused' olur → overlay kapanır.
+              // Ayrıca remote guard açıkken (seek sonrası) overlay gösterme;
+              // guard bitene kadar bekleyip gerçek buffering ise sonra göster.
+              if (roomStatus === 'playing' && !guardActive) {
+                setBuffering(true);
+                useRoomStore.getState().setSyncStatus('buffering');
+              }
+              // Seek sonrası uzun buffering'de resync loop'unu kır: guard uzat.
+              extendRemoteGuard(700);
+              const rid = roomIdRef.current;
+              if (rid) getSocket().emit('client:buffering', { roomId: rid });
+              return;
+            }
+            if (st === YT.PlayerState.PLAYING) {
+              setBuffering(false);
+              videoEndedRef.current = false;
+              setVideoEnded(false);
+              setUiPlaying(true);
+              if (admin) {
+                // Bounce guard: SADECE player durumu oda durumuyla UYUŞMADIĞINDA
+                // emit et. Remote play geldiğinde roomPlaybackStatus zaten 'playing'
+                // → echo re-emit etmez. Yerel admin play'e bastıysa → emit.
+                if (!guardActive && ytDebounce.current && roomStatus !== 'playing') {
+                  ytDebounce.current = false;
+                  const rid = roomIdRef.current;
+                  if (rid) {
+                    const t = safeCall(() => playerRef.current?.getCurrentTime()) ?? 0;
+                    getSocket().emit('playback:play', {
+                      roomId: rid,
+                      currentTime: t,
+                      clientEventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                    });
+                  }
+                  useRoomStore.getState().setRoomPlaybackStatus('playing');
+                  setTimeout(() => { ytDebounce.current = true; }, 500);
+                }
+              } else {
+                // Member: oda durumu playing değilse (admin pause yapmış) hemen
+                // resync. Konum farkı için 4sn threshold (seek sonrası normal
+                // buffering/seek süresi içinde tetiklenmesin).
+                if (!guardActive && (roomStatus !== 'playing' || isOutOfSync(4))) {
+                  resyncToLeader();
+                }
+              }
+              return;
+            }
+            if (st === YT.PlayerState.PAUSED) {
+              setUiPlaying(false);
+              setBuffering(false); // admin pause'da buffering yazısı kalmasın
+              if (admin) {
+                if (!guardActive && ytDebounce.current && roomStatus === 'playing') {
+                  ytDebounce.current = false;
+                  const rid = roomIdRef.current;
+                  if (rid) {
+                    const t = safeCall(() => playerRef.current?.getCurrentTime()) ?? 0;
+                    getSocket().emit('playback:pause', {
+                      roomId: rid,
+                      currentTime: t,
+                      clientEventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                    });
+                  }
+                  useRoomStore.getState().setRoomPlaybackStatus('paused');
+                  setTimeout(() => { ytDebounce.current = true; }, 500);
+                }
+              } else {
+                // Member: oda hâlâ playing ise (admin durdurmadıysa) hemen resync.
+                // Konum farkı için 4sn threshold.
+                if (!guardActive && (roomStatus === 'playing' || isOutOfSync(4))) {
+                  resyncToLeader();
+                }
+              }
+              return;
+            }
+          },
+          onError: (e: YT.OnErrorEvent) => {
+            const toast = addToastRef.current;
+            if (!toast) return;
+            const code = e.data;
+            if (code === 101 || code === 150) toast('Bu video gömülü oynatmaya izin vermiyor. Başka bir video deneyin.', 'error');
+            else if (code === 100) toast('Bu video bulunamadı veya kaldırılmış.', 'error');
+            else if (code === 5) toast('Video oynatılamadı. YouTube hesabınıza giriş yapıp tekrar deneyin.', 'error');
+            else toast('Video yüklenirken bir hata oluştu.', 'error');
+          },
+        },
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      if (onReadyTimeoutRef.current) { clearTimeout(onReadyTimeoutRef.current); onReadyTimeoutRef.current = null; }
+    };
+  }, [videoId, loadYouTubeSDK, safeCall, seekTo, startPlayback, pausePlayback, iAmAdmin]);
+
+  // --- 500ms GERÇEK getCurrentTime poll'u + admin seek-jump detection ---
+  // Serbest sayacın yerine: gerçek YouTube pozisyonunu okur, drift referansı
+  // ve UI zamanı bunu kullanır. Admin seek'i jump olarak yakalar.
+  useEffect(() => {
+    if (!playerReady || !videoId) {
+      if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; }
+      return;
+    }
+    lastSeekCheckTime.current = Date.now();
+    lastSeekCheckRealTime.current = 0;
+
+    pollTimerRef.current = setInterval(() => {
+      const player = playerRef.current;
+      if (!player) return;
+      const real = safeCall(() => player.getCurrentTime());
+      if (typeof real !== 'number') return;
+
+      const nowMs = Date.now();
+      const state = useRoomStore.getState();
+      const roomStatus = state.roomPlaybackStatus;
+      const admin = iAmAdmin();
+
+      // Lider zamanını çöz (admin varsa admin, yoksa median/max)
+      const tsMap = state.tsMap;
+      const adminId = state.adminUserId;
+      let leaderTime: number | undefined;
+      if (adminId && typeof tsMap[adminId] === 'number') {
+        leaderTime = tsMap[adminId];
+      } else if (Object.values(tsMap).length > 0) {
+        leaderTime = Object.values(tsMap).length > 2
+          ? calculateMedian(Object.values(tsMap))
+          : Math.max(...Object.values(tsMap));
+      } else if (state.room?.playback) {
+        leaderTime = computeExpectedRoomTime(state.room.playback, state.serverOffsetMs);
+      }
+      const drift = typeof leaderTime === 'number' ? real - leaderTime : 0;
+      const absDrift = Math.abs(drift);
+
+      if (admin) {
+        // --- Admin seek-jump detection (kök neden B düzeltmesi) ---
+        // Native timeline sürüklenince onStateChange target zamanı vermez;
+        // gerçek getCurrentTime'daki büyük zıplama seek'i ele verir.
+        if (
+          !applyingRemoteUpdate.current &&
+          lastSeekCheckRealTime.current > 0 &&
+          roomStatus === 'playing'
+        ) {
+          const elapsed = (nowMs - lastSeekCheckTime.current) / 1000;
+          const expectedDelta = elapsed * lastAppliedPlaybackRate.current;
+          const actualDelta = real - lastSeekCheckRealTime.current;
+          const jump = Math.abs(actualDelta - expectedDelta);
+          if (jump > 2.0) {
+            const rid = roomIdRef.current;
+            if (rid) {
+              getSocket().emit('playback:seek', {
+                roomId: rid,
+                targetTime: Math.max(0, real),
+                shouldPlay: true,
+                clientEventId: `evt_${nowMs}_${Math.random().toString(36).slice(2)}`,
+              });
+            }
+          }
+        }
+
+        // Admin kendi lideridir: tsMap'e göre kendi kendine resync etmemeli.
+        // Sadece seek-jump detection (yukarıda) ve hafif geride kalma durumunda
+        // rate ile yakala. Admin zaten authoritative state'i belirler.
+        if (!applyingRemoteUpdate.current && roomStatus === 'playing' && typeof leaderTime === 'number' && drift < 0) {
+          // admin kendi konumu liderden (kendi) gerideyse hafif hızlandır
+          if (absDrift > 0.5 && absDrift <= 3) {
+            const pbr = Math.min(1 + absDrift / 10, 1.1);
+            if (Math.abs(pbr - lastAppliedPlaybackRate.current) > 0.001) {
+              safeCall(() => player.setPlaybackRate(pbr));
+              lastAppliedPlaybackRate.current = pbr;
+            }
+          } else if (absDrift <= 0.3 && lastAppliedPlaybackRate.current !== 1) {
+            safeCall(() => player.setPlaybackRate(1));
+            lastAppliedPlaybackRate.current = 1;
+          }
+        }
+      } else {
+        // --- Member: lider ile durum veya konum farkı varsa zorla resync ---
+        // Member'in kendi pause/seek/play denemelerine izin verme.
+        if (!applyingRemoteUpdate.current) {
+          const playerState = safeCall(() => player.getPlayerState());
+          const playerPlaying = playerState === YT.PlayerState.PLAYING;
+          const roomPlaying = roomStatus === 'playing';
+          const stateMismatch = playerPlaying !== roomPlaying;
+          const tooFar = typeof leaderTime === 'number' && absDrift > 4;
+          if (stateMismatch || tooFar) {
+            resyncToLeader();
+          } else if (roomPlaying && typeof leaderTime === 'number') {
+            // Hafif drift: yavaşça rate ile yakala (1.0→1.1x)
+            if (absDrift > 0.5 && drift < 0) {
+              const pbr = Math.min(1 + absDrift / 10, 1.1);
+              if (Math.abs(pbr - lastAppliedPlaybackRate.current) > 0.001) {
+                safeCall(() => player.setPlaybackRate(pbr));
+                lastAppliedPlaybackRate.current = pbr;
+              }
+            } else if (absDrift <= 0.3 && lastAppliedPlaybackRate.current !== 1) {
+              safeCall(() => player.setPlaybackRate(1));
+              lastAppliedPlaybackRate.current = 1;
+            }
+          }
+        }
+      }
+      lastSeekCheckTime.current = nowMs;
+      lastSeekCheckRealTime.current = real;
+
+      // Gerçek zamanı anchor'la (UI + drift referansı)
+      realTimeRef.current = real;
+      realTimeAtRef.current = nowMs;
+      setUiTime(real);
+      setUiPlaying(roomStatus === 'playing');
+
+      // Admin pause durumunda buffering overlay'i asla gösterme
+      if (roomStatus !== 'playing' && buffering) setBuffering(false);
+
+      // Süre (meta birincil, SDK yedek)
+      if (videoDuration.current == null) {
+        const dur = safeCall(() => player.getDuration()) ?? 0;
+        if (dur > 0) videoDuration.current = dur;
+      }
+
+      // Video sonu (süre bazlı yedek — SDK ENDED zaten güvenilir ama burada da tut)
+      const dur = videoDuration.current;
+      if (dur && dur > 0 && real >= dur - 0.5 && !videoEndedRef.current) {
+        videoEndedRef.current = true;
+        setVideoEnded(true);
+      }
+    }, 500);
+
+    return () => { if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; } };
+  }, [playerReady, videoId, safeCall, iAmAdmin]);
+
+  // --- 1s heartbeat emit: GERÇEK getCurrentTime → sunucu tsMap ---
+  // Remote guard penceresi açıkken (applyRemoteState/resync sonrası) heartbeat
+  // atlatılır; aksi halde seek sırasında eski konum tsMap'e yazılıp diğer
+  // client'lar yanlış lider konumu görür ve feedback loop oluşur.
+  useEffect(() => {
+    if (!playerReady || !roomIdFromStore) return;
+    heartbeatTimerRef.current = setInterval(() => {
+      if (applyingRemoteUpdate.current || Date.now() < remoteGuardUntil.current) return;
+      const state = useRoomStore.getState();
+      if (!state.room?.playback.videoId) return;
+      const player = playerRef.current;
+      if (!player) return;
+      const real = safeCall(() => player.getCurrentTime());
+      if (typeof real !== 'number') return;
+      getSocket().emit('playback:heartbeat', {
+        roomId: roomIdFromStore,
+        currentTime: real,
+      });
+    }, 1000);
+    return () => { if (heartbeatTimerRef.current) { clearInterval(heartbeatTimerRef.current); heartbeatTimerRef.current = null; } };
+  }, [playerReady, roomIdFromStore, safeCall]);
+
+  // --- Leader zamanı: admin'in tsMap değeri (fallback median/max) ---
+  const getLeaderTime = useCallback((): number => {
+    const state = useRoomStore.getState();
+    const tsMap = state.tsMap;
+    const adminId = state.adminUserId;
+    const values = Object.values(tsMap);
+    if (adminId && typeof tsMap[adminId] === 'number') {
+      return tsMap[adminId]; // admin tek lider (admin-authoritative model)
+    }
+    if (values.length === 0) return 0;
+    if (values.length > 2) return calculateMedian(values);
+    return Math.max(...values); // ≤2 viewer: en ilerideki lider (watchparty)
+  }, []);
+
+  // --- Drift düzeltme + SyncBadge: playback:tsmap listener ---
+  useEffect(() => {
+    const rid = roomIdFromStore;
+    if (!rid) return;
+    const socket = getSocket();
+
+    const handleTsMap = (data: { tsMap: Record<string, number>; adminUserId: string | null }) => {
+      const state = useRoomStore.getState();
+      state.setTsMap(data.tsMap);
+      if (data.adminUserId) state.setAdminUserId(data.adminUserId);
+
+      if (!state.room?.playback.videoId) return;
+      if (applyingRemoteUpdate.current) return;
+      const roomStatus = state.roomPlaybackStatus;
+      if (roomStatus !== 'playing') {
+        // paused/idle — drift düzeltme kapalı, ama lider-farkı için badge güncelle
+        updateSyncBadge(state, data.tsMap, data.adminUserId);
+        return;
+      }
+
+      // Drift düzeltme artık 500ms poll'da yapılıyor (daha hızlı ve gerçek
+      // player durumunu gözlemleyen). Burada sadece badge güncellemesi yeterli.
+      updateSyncBadge(state, data.tsMap, data.adminUserId);
+    };
+
+    const updateSyncBadge = (
+      state: ReturnType<typeof useRoomStore.getState>,
+      tsMap: Record<string, number>,
+      adminUserId: string | null,
+    ) => {
+      const myId = state.currentUser?.id;
+      const myTime = myId ? tsMap[myId] : undefined;
+      if (typeof myTime !== 'number') return;
+      const leader = adminUserId && tsMap[adminUserId] != null
+        ? tsMap[adminUserId]
+        : (Object.values(tsMap).length > 2
+            ? calculateMedian(Object.values(tsMap))
+            : Math.max(...Object.values(tsMap)));
+      const absDelta = Math.abs(leader - myTime);
+      if (absDelta <= 1.5) useRoomStore.getState().setSyncStatus('synced');
+      else if (absDelta <= 2.5) useRoomStore.getState().setSyncStatus('slightly-off');
+      else useRoomStore.getState().setSyncStatus('resyncing');
+    };
+
+    socket.on('playback:tsmap', handleTsMap);
+    return () => { socket.off('playback:tsmap', handleTsMap); };
+  }, [roomIdFromStore, iAmAdmin, seekTo, startPlayback, safeCall]);
+
+  // --- sync:command listener (initial-sync / sync-response / reassert) ---
   useEffect(() => {
     const rid = roomIdFromStore;
     if (!rid) return;
     const socket = getSocket();
     const handleSyncCommand = (data: any) => {
-      applyingRemoteUpdate.current = true;
-      try {
-        if (typeof data.targetTime === 'number') { sendCommand('seekTo', [data.targetTime, true]); playerState.current.currentTime = data.targetTime; playerState.current.lastTimeUpdate = Date.now(); }
-        if (data.status === 'playing') { startPlayback(); setUiPlaying(true); }
-        else if (data.status === 'paused') { sendCommand('pauseVideo'); playerState.current.playing = false; setUiPlaying(false); setNeedsUserInteraction(false); }
-        useRoomStore.getState().setLastRemoteVersion(data.version || 0);
-        setUserManuallySeeked(false);
-        lastLocalTime.current = playerState.current.currentTime;
-        lastCheckTime.current = Date.now();
-      } finally { setTimeout(() => { applyingRemoteUpdate.current = false; }, 500); }
+      const status = data.status as string;
+      const targetTime = typeof data.targetTime === 'number' ? data.targetTime : 0;
+      applyRemoteState(
+        status === 'playing' ? 'playing' : status === 'paused' ? 'paused' : 'idle',
+        Math.max(0, targetTime),
+        500,
+      );
+      useRoomStore.getState().setLastRemoteVersion(data.version || 0);
     };
     socket.on('sync:command', handleSyncCommand);
     return () => { socket.off('sync:command', handleSyncCommand); };
-  }, [roomIdFromStore, sendCommand, startPlayback]);
+  }, [roomIdFromStore, seekTo, startPlayback, pausePlayback]);
 
-  // Drift sync loop
-  useEffect(() => {
-    if (!playerReady || !roomIdFromStore) return;
-    let tickCount = 0;
-    const interval = setInterval(() => {
-      const state = useRoomStore.getState();
-      if (!state.room?.playback.videoId) return;
-      if (applyingRemoteUpdate.current) return;
-      const localTime = getLiveTime();
-      const now = Date.now();
-      const elapsed = (now - lastCheckTime.current) / 1000;
-      const expectedLocal = lastLocalTime.current + (playerState.current.playing ? elapsed : 0);
-      const jump = Math.abs(localTime - expectedLocal);
-      // userManuallySeeked yalnızca admin için: admin kendi seek/pause'unu sunucuya
-      // emit eder (oda durumu güncellenir, drift oluşmaz). Member native pause/seek
-      // yaparsa emit edilmez (yukarıdaki gate) — drift loop onu geri çekmeli, bu
-      // yüzden member için userManuallySeeked setlenmez (geri çekmeye engel olur).
-      const myRole = state.currentUser?.role;
-      const iAmAdmin = myRole === 'owner' || myRole === 'admin';
-      if (jump > 3 && lastLocalTime.current > 0 && !isRemoteSyncing.current && iAmAdmin) { setUserManuallySeeked(true); }
-      lastLocalTime.current = localTime; lastCheckTime.current = now;
-      tickCount++;
-      if (tickCount % 2 !== 0) return;
-      if (userManuallySeeked && iAmAdmin) { useRoomStore.getState().setSyncStatus('slightly-off'); return; }
-      const expectedTime = computeExpectedRoomTime(
-        { baseTime: state.room.playback.baseTime, baseServerTime: state.room.playback.baseServerTime, status: state.room.playback.status },
-        state.serverOffsetMs,
-      );
-      const drift = localTime - expectedTime;
-      const absDrift = Math.abs(drift);
-      if (absDrift <= 1.5) { useRoomStore.getState().setSyncStatus('synced'); return; }
-      if (absDrift <= 2.5) { useRoomStore.getState().setSyncStatus('slightly-off'); return; }
-      // Member native duraklatmış/sarmış olabilir: drift oda durumuna göre büyür.
-      // Geri çek: seekTo + oda playing ise playVideo (member duraklatılmışken
-      // oynatmaya döndür). Komutlar throttled sendCommand ile birleştiği için
-      // seekTo+playVideo çakışması YouTube'u çökertmez. Admin pause broadcast'le
-      // tüm odada paused olur → admin tarafında drift oluşmaz.
-      const roomPlaying = state.room.playback.status === 'playing';
-      if (absDrift <= 3) {
-        useRoomStore.getState().setSyncStatus('slightly-off');
-        isRemoteSyncing.current = true; applyingRemoteUpdate.current = true;
-        sendCommand('seekTo', [expectedTime, true]);
-        if (roomPlaying) { sendCommand('playVideo'); playerState.current.playing = true; }
-        else { sendCommand('pauseVideo'); playerState.current.playing = false; }
-        playerState.current.currentTime = expectedTime; playerState.current.lastTimeUpdate = Date.now();
-        lastLocalTime.current = expectedTime; lastCheckTime.current = Date.now();
-        setTimeout(() => { applyingRemoteUpdate.current = false; isRemoteSyncing.current = false; }, 1500);
-        return;
-      }
-      useRoomStore.getState().setSyncStatus('resyncing');
-      isRemoteSyncing.current = true; applyingRemoteUpdate.current = true;
-      sendCommand('seekTo', [expectedTime, true]);
-      if (roomPlaying) { sendCommand('playVideo'); playerState.current.playing = true; }
-      else { sendCommand('pauseVideo'); playerState.current.playing = false; }
-      playerState.current.currentTime = expectedTime; playerState.current.lastTimeUpdate = Date.now();
-      lastLocalTime.current = expectedTime; lastCheckTime.current = Date.now();
-      const toast = addToastRef.current;
-      if (toast) toast('En son kaldığın yerden devam ediliyor.', 'info');
-      setTimeout(() => { applyingRemoteUpdate.current = false; isRemoteSyncing.current = false; }, 1500);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [playerReady, roomIdFromStore, userManuallySeeked, sendCommand, getLiveTime]);
-
-  // Version watch
+  // --- Version watch: playback:state (admin play/pause/seek) → diğerlerine uygula ---
   const playbackVersion = useRoomStore((s) => s.room?.playback.version ?? 0);
-  // Sunucu metası → videoDuration. Sunucu süresi birincil kaynak; postMessage yedek.
-  // meta değişince (yeni video / güncellenmiş meta) videoDuration güncellenir.
+  useEffect(() => {
+    if (!playerReady || !roomIdFromStore || playbackVersion === 0) return;
+    const state = useRoomStore.getState();
+    const playback = state.room?.playback;
+    if (!playback?.videoId || playback.baseServerTime <= 0) return;
+    const myUserId = state.currentUser?.id;
+    // Değişikliği başlatan (admin) atla — kendi zaten o konumda
+    if (myUserId && playback.updatedBy === myUserId) return;
+    // Yeni oynatma başladı → videoEnded overlay'i kapat
+    if (playback.status === 'playing' || playback.baseTime === 0) {
+      videoEndedRef.current = false;
+      setVideoEnded(false);
+    }
+    const targetTime = computeExpectedRoomTime(
+      { baseTime: playback.baseTime, baseServerTime: playback.baseServerTime, status: playback.status },
+      state.serverOffsetMs,
+    );
+    applyRemoteState(
+      playback.status as 'playing' | 'paused' | 'idle',
+      Math.max(0, targetTime),
+      700,
+    );
+  }, [playbackVersion, playerReady, roomIdFromStore, applyRemoteState]);
+
+  // --- meta → videoDuration (sunucu süresi birincil, SDK yedek) ---
   useEffect(() => {
     if (!meta) return;
     if (meta.videoId === useRoomStore.getState().room?.playback.videoId) {
@@ -425,59 +718,37 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       }
     }
   }, [meta]);
-  useEffect(() => {
-    if (!playerReady || !roomIdFromStore || playbackVersion === 0) return;
-    const state = useRoomStore.getState();
-    const playback = state.room?.playback;
-    if (!playback?.videoId || playback.baseServerTime <= 0) return;
-    const myUserId = state.currentUser?.id;
-    if (myUserId && playback.updatedBy === myUserId) return;
-    // Yeni oynatma başladı (version arttı) — "Video bitti" overlay'i kapat.
-    // Aynı videoId replay (WatchList'ten tekrar oynat) durumunda videoId
-    // değişmediği için timeout fallback tetiklenmez; version artışı overlay'i
-    // kapatır.
-    if (playback.status === 'playing' || playback.baseTime === 0) {
-      videoEndedRef.current = false; setVideoEnded(false);
-    }
-    const targetTime = computeExpectedRoomTime(
-      { baseTime: playback.baseTime, baseServerTime: playback.baseServerTime, status: playback.status },
-      state.serverOffsetMs,
-    );
-    isRemoteSyncing.current = true; applyingRemoteUpdate.current = true;
-    sendCommand('seekTo', [targetTime, true]);
-    playerState.current.currentTime = targetTime; playerState.current.lastTimeUpdate = Date.now();
-    lastLocalTime.current = targetTime; lastCheckTime.current = Date.now();
-    if (playback.status === 'playing') {
-      startPlayback(); setUiPlaying(true);
-      if (autoplayRetryTimer.current) clearTimeout(autoplayRetryTimer.current);
-      autoplayRetryTimer.current = setTimeout(() => { if (!playerState.current.playing) setNeedsUserInteraction(true); }, 2000);
-    } else if (playback.status === 'paused') {
-      sendCommand('pauseVideo'); playerState.current.playing = false; setUiPlaying(false); setNeedsUserInteraction(false);
-    }
-    setUserManuallySeeked(false);
-    setTimeout(() => { applyingRemoteUpdate.current = false; isRemoteSyncing.current = false; }, 1500);
-  }, [playbackVersion]);
 
+  // --- Manual "Beraber izlemeye devam et" butonu (gerçek konuma resync) ---
   const handleRejoinRoom = useCallback(() => {
-    const rid = roomIdRef.current; if (!rid) return;
-    applyingRemoteUpdate.current = true;
-    getSocket().emit('sync:request', { roomId: rid, localTime: getLiveTime(), playerState: 'desynced' });
-    setTimeout(() => { applyingRemoteUpdate.current = false; setUserManuallySeeked(false); }, 1000);
-  }, [getLiveTime]);
+    const leader = getLeaderTime();
+    if (leader <= 0) {
+      const rid = roomIdRef.current;
+      if (rid) getSocket().emit('sync:request', { roomId: rid, localTime: getLiveTime(), playerState: 'desynced' });
+      return;
+    }
+    const state = useRoomStore.getState();
+    applyRemoteState(state.roomPlaybackStatus, leader, 900);
+  }, [getLeaderTime, getLiveTime, applyRemoteState]);
 
-  if (!videoId || !embedUrl) return null;
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+      if (onReadyTimeoutRef.current) clearTimeout(onReadyTimeoutRef.current);
+      if (playerRef.current) { try { playerRef.current?.destroy?.(); } catch { /* ignore */ } playerRef.current = null; }
+    };
+  }, []);
+
+  if (!videoId) return null;
 
   return (
     <div ref={containerRef} className="relative w-full h-full group">
-      <iframe
-        ref={iframeRef}
-        src={embedUrl}
-        className="w-full h-full border-0"
-        allow="autoplay; encrypted-media; fullscreen"
-        title="YouTube video player"
-      />
+      {/* SDK iframe'i bu div'e inject edilir */}
+      <div ref={playerDivRef} className="w-full h-full" />
 
-      {/* Buffering overlay — native YouTube çubuğunun üzerinde, sadece yüklenirken */}
+      {/* Buffering overlay — native YouTube çubuğunun üzerinde */}
       {buffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10 pointer-events-none">
           <div className="text-center">
@@ -487,10 +758,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
         </div>
       )}
 
-      {/* Kendi fullscreen butonumuz — sol üst köşede (YouTube native sağ-üst kontrolleriyle
-          çakışmaz). YouTube'un kendi fullscreen butonu fs=0 ile kapalı (oradan "More videos"
-          paneli çıkıyordu). Container div'i fullscreen eder — YouTube embed modunda kalır,
-          panel çıkmaz. pointer-events-auto, hover'da görünür. */}
+      {/* Kendi fullscreen butonumuz — sol üst köşede */}
       {playerReady && !buffering && !videoEnded && (
         <button
           onClick={toggleFullscreen}
@@ -512,11 +780,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
         </button>
       )}
 
-      {/* Video bitti — YouTube'un "More videos" öneri panelini kaplayan overlay.
-          Panel cross-origin iframe içinde olduğundan tıklamayı yakalayıp video:change'e
-          çeviremeyiz; bu yüzden paneli fiziksel gizler + tıklamayı engelleriz
-          (pointer-events-auto ile iframe'e iletilmez). Video değişimi yalnızca
-          admin/owner VideoInputBar/WatchList üzerinden (sunucu admin-gate'li). */}
+      {/* Video bitti — YouTube "More videos" öneri panelini kaplayan overlay */}
       {videoEnded && !buffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/85 backdrop-blur-sm z-20 pointer-events-auto animate-fade-in">
           <div className="text-center px-6">
@@ -525,22 +789,12 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
             <p className="text-text-muted text-sm mt-2 font-semibold">
               Yeni bir video başlatmak için adminin/odanın sahibinin yeni bir YouTube linki eklemesi gerek.
             </p>
+            <button onClick={handleRejoinRoom}
+              className="mt-4 px-5 py-2.5 bg-red-main text-white font-semibold rounded-xl
+                glow-red hover:glow-red transition-all duration-300 hover:bg-red-soft active:scale-[0.98] shadow-lg">
+              Senkronize et
+            </button>
           </div>
-        </div>
-      )}
-
-      {/* Manual seek rejoin button — member native timeline'ı sarayıp drift oluşunca */}
-      {userManuallySeeked && !buffering && (
-        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10 animate-fade-in">
-          <button onClick={handleRejoinRoom}
-            className="pointer-events-auto px-5 py-3 bg-red-main text-white font-semibold rounded-xl
-              glow-red hover:glow-red transition-all duration-300
-              hover:bg-red-soft active:scale-[0.98] shadow-lg flex items-center gap-2">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            Beraber izlemeye devam et
-          </button>
         </div>
       )}
     </div>
@@ -548,9 +802,9 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
 }
 
 // ============================================================
-// Sync Badge — player DIŞINDA, player'ın hemen üstünde render edilir
-// (RoomPage'de player container'ın üzerinde). Player içindeki native
-// tuşları (kalite/altyazı/fullscreen) engellememesi için burada değil.
+// Sync Badge — player DIŞINDA, player'ın hemen üstünde (RoomPage).
+// Player içindeki native tuşları (kalite/altyazı/fullscreen) engellememesi
+// için player container dışında render edilir.
 // ============================================================
 export function SyncBadge() {
   const syncStatus = useRoomStore((s) => s.syncStatus);
@@ -565,8 +819,6 @@ export function SyncBadge() {
     idle: { label: 'Bekleniyor', color: 'bg-white/5 text-text-muted border-white/10' },
   };
   const { label, color } = config[syncStatus] || config.idle;
-  // Player DIŞINDA, player'ın hemen üstünde render edilir (RoomPage).
-  // absolute positioning yok — normal akışta, sağa yaslı inline badge.
   return (
     <div className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold border ${color} backdrop-blur-sm transition-all duration-300 self-end`}>
       {label}

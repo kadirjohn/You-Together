@@ -1,10 +1,12 @@
 import type { Socket } from 'socket.io';
+import type { Server as SocketIOServer } from 'socket.io';
 import { roomRepository } from '../rooms/room.repository.js';
 import {
   playbackEventSchema,
   seekEventSchema,
   syncRequestSchema,
   playerReadySchema,
+  heartbeatSchema,
   PlaybackStatus,
   RoomRole,
 } from '../rooms/room.types.js';
@@ -16,6 +18,108 @@ const repo = roomRepository();
 
 function broadcastToRoom(roomId: string, event: string, data: any) {
   getIO().to(roomId).emit(event, data);
+}
+
+// ---------------------------------------------------------------------------
+// tsMap — per-odaa in-memory "gerçek konum" haritası (watchparty REC:tsMap).
+//
+// baseTime/baseServerTime ekstrapolasyonu authoritative oynatma durumunu
+// (play/pause/seek) tutar ve admin-gate'lidir. tsMap ise her client'ın her
+// saniye gönderdiği GERÇEK getCurrentTime() değerlerini tutar — drift
+// düzeltme bunu kullanır (iki serbest-sayan saati karşılaştırmak yerine
+// gerçek video konumlarını karşılaştırır).
+//
+// In-memory (Redis değil): 1 sn'lik ephemeral anlık görüntü. Sunucu yeniden
+// başlınca sıfırlanır, sorun değil — client'lar bir sonraki heartbeat'te
+// tsMap'i yeniden doldurur.
+// ---------------------------------------------------------------------------
+interface RoomTsMap {
+  // { userId -> normalize edilmiş gerçek oynatma zamanı (saniye) }
+  tsMap: Record<string, number>;
+  // Son broadcast zamanı (normalize için: her heartbeat'te son-emit'ten
+  // beri geçen süreyi çıkarırız, böylece 1 sn penceresinde toplanan
+  // değerler karşılaştırılabilir olur — watchparty room.ts:805-824).
+  lastEmit: number;
+  // Leader (admin/owner) userId'si. Drift düzeltme lider konumuna göre.
+  // playback.updatedBy'den çözülür; yoksa ownerUserId fallback.
+  adminUserId: string | null;
+}
+const roomTsMaps = new Map<string, RoomTsMap>();
+
+function getOrCreateRoomTsMap(roomId: string): RoomTsMap {
+  let entry = roomTsMaps.get(roomId);
+  if (!entry) {
+    entry = { tsMap: {}, lastEmit: now(), adminUserId: null };
+    roomTsMaps.set(roomId, entry);
+  }
+  return entry;
+}
+
+// Oda için lider (admin/owner) userId'sini çöz. Önce playback.updatedBy
+// (son oynatma değiştiren kişi — admin kontrolü tutulduğu için genelde
+// admin/owner), yoksa ownerUserId.
+async function resolveAdminUserId(roomId: string): Promise<string | null> {
+  const room = await repo.getRoom(roomId);
+  if (!room) return null;
+  const updatedBy = room.playback.updatedBy;
+  if (updatedBy) return updatedBy;
+  return room.ownerUserId ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Periodic tsMap broadcaster — her saniye her aktif oda için tsMap'i
+// herkese broadcast eder (watchparty room.ts:94-107). Stale entry'leri
+// (artık odada olmayan kullanıcılar) prune eder. Boş odaları temizler.
+// ---------------------------------------------------------------------------
+let broadcasterTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startTsMapBroadcaster(io: SocketIOServer): void {
+  if (broadcasterTimer) return; // zaten çalışıyor
+
+  broadcasterTimer = setInterval(async () => {
+    for (const [roomId, entry] of roomTsMaps.entries()) {
+      try {
+        // Odadaki kullanıcıları çek (Redis). disconnected olmayanlar.
+        const users = await repo.getUsers(roomId);
+        const memberIds = new Set(
+          users.filter((u) => !(u as any).disconnectedAt).map((u) => u.id),
+        );
+
+        // Stale entry'leri prune
+        for (const key of Object.keys(entry.tsMap)) {
+          if (!memberIds.has(key)) delete entry.tsMap[key];
+        }
+
+        // Aktif video yoksa veya odada kimse yoksa atla (ve temizle)
+        const room = await repo.getRoom(roomId);
+        if (!room || !room.playback.videoId || memberIds.size === 0) {
+          if (memberIds.size === 0) roomTsMaps.delete(roomId);
+          continue;
+        }
+
+        entry.lastEmit = now();
+        io.to(roomId).emit('playback:tsmap', {
+          tsMap: entry.tsMap,
+          adminUserId: entry.adminUserId,
+        });
+      } catch (err) {
+        // Tek oda hatası tüm broadcaster'ı çökertmesin
+        // (Redis geçici yavaşsa vs.)
+      }
+    }
+  }, 1000);
+}
+
+export function stopTsMapBroadcaster(): void {
+  if (broadcasterTimer) {
+    clearInterval(broadcasterTimer);
+    broadcasterTimer = null;
+  }
+}
+
+// Oda silinince / boşalınca tsMap'i temizle (room.handlers çağırabilir).
+export function clearRoomTsMap(roomId: string): void {
+  roomTsMaps.delete(roomId);
 }
 
 export function registerPlaybackHandlers(socket: Socket) {
@@ -65,6 +169,14 @@ export function registerPlaybackHandlers(socket: Socket) {
     };
 
     await repo.updatePlaybackState(roomId, playback);
+
+    // Lider (admin) tsMap'e kendi gerçek konumunu yaz ki diğerleri ona
+    // göre drift düzeltsin. Host-change reset (watchparty room.ts:536-562):
+    // eski stale konumlar gelmesin diye tsMap'i temizle ve admin'le başlat.
+    const entry = getOrCreateRoomTsMap(roomId);
+    entry.adminUserId = mapping.userId;
+    entry.tsMap = { [mapping.userId]: currentTime };
+    entry.lastEmit = now();
 
     broadcastToRoom(roomId, 'playback:state', {
       status: playback.status,
@@ -116,6 +228,11 @@ export function registerPlaybackHandlers(socket: Socket) {
 
     await repo.updatePlaybackState(roomId, playback);
 
+    const entry = getOrCreateRoomTsMap(roomId);
+    entry.adminUserId = mapping.userId;
+    entry.tsMap = { [mapping.userId]: currentTime };
+    entry.lastEmit = now();
+
     broadcastToRoom(roomId, 'playback:state', {
       status: playback.status,
       baseTime: playback.baseTime,
@@ -166,6 +283,12 @@ export function registerPlaybackHandlers(socket: Socket) {
 
     await repo.updatePlaybackState(roomId, playback);
 
+    // Seek sonrası tsMap'i reset: eski konumlar stale. Admin yeni konumla başlat.
+    const entry = getOrCreateRoomTsMap(roomId);
+    entry.adminUserId = mapping.userId;
+    entry.tsMap = { [mapping.userId]: targetTime };
+    entry.lastEmit = now();
+
     broadcastToRoom(roomId, 'playback:state', {
       status: playback.status,
       baseTime: playback.baseTime,
@@ -175,6 +298,48 @@ export function registerPlaybackHandlers(socket: Socket) {
       clientEventId,
       serverTime: now(),
     });
+  });
+
+  // --- Playback: Heartbeat (client → server, GERÇEK getCurrentTime) ---
+  // Her client her saniye player'ının gerçek pozisyonunu gönderir. Sunucu
+  // bunu normalize ederek per-odaa tsMap'e yazar (watchparty room.ts:805-824).
+  // 1 sn'de bir broadcaster herkese playback:tsmap broadcast eder.
+  socket.on('playback:heartbeat', async (payload: unknown) => {
+    const parsed = heartbeatSchema.safeParse(payload);
+    if (!parsed.success) return;
+
+    const { roomId, currentTime } = parsed.data;
+    const room = await repo.getRoom(roomId);
+    if (!room || !room.playback.videoId) return;
+
+    const mapping = await repo.getSocketUserMap(socket.id);
+    if (!mapping || mapping.roomId !== roomId) return;
+
+    const entry = getOrCreateRoomTsMap(roomId);
+    // Lider kimliği çöz (henüz çözülmemişse). admin/owner = drift lideri.
+    if (!entry.adminUserId) {
+      entry.adminUserId = await resolveAdminUserId(roomId);
+    }
+
+    // Monotonik guard (watchparty room.ts:815): member'ın stale/geri konumu
+    // lideri geri sürmesin. Admin kendi konumunu her zaman yazar (lider).
+    const isAdmin = entry.adminUserId === mapping.userId;
+    if (!isAdmin && room.playback.baseTime > 0) {
+      // Member paused durumunda veya beklenenden çok gerideyse yazmaya gerek yok
+      // (drift düzeltme zaten onu öne çekecek). Sadece makul aralıkta yaz.
+      // Bu, buffering'de takılı kalan bir member'ın tsMap'i kirletmesini
+      // önler. Lider konumu izle: member >= lider-30sn ise kabul et.
+      const leaderTime = entry.adminUserId ? entry.tsMap[entry.adminUserId] : undefined;
+      if (typeof leaderTime === 'number' && currentTime < leaderTime - 30) {
+        return;
+      }
+    }
+
+    // Normalize: 1 sn penceresinde toplanan heartbeat'leri karşılaştırılabilir
+    // yap. Son broadcast'ten beri geçen süreyi çıkar, +1 ekle (broadcaster
+    // ~1 sn içinde emit edecek) — watchparty room.ts:821-823.
+    const timeSinceEmit = (now() - entry.lastEmit) / 1000;
+    entry.tsMap[mapping.userId] = currentTime - timeSinceEmit + 1;
   });
 
   // --- Sync: Request ---
@@ -225,7 +390,7 @@ export function registerPlaybackHandlers(socket: Socket) {
     // Server could track buffering users but MVP just acknowledges
   });
 
-  // --- Client: Heartbeat ---
+  // --- Client: Heartbeat (legacy, keeps lastSeenAt alive) ---
   socket.on('client:heartbeat', async (payload: unknown) => {
     // Keep socket alive, update lastSeenAt
     const { roomId } = (payload as any) || {};

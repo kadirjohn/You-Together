@@ -8,7 +8,7 @@ import { config } from './config.js';
 import { connectRedis } from './redis/client.js';
 import { createSocketServer, getIO } from './sockets/socket.server.js';
 import { registerRoomHandlers } from './sockets/room.handlers.js';
-import { registerPlaybackHandlers } from './sockets/playback.handlers.js';
+import { registerPlaybackHandlers, startTsMapBroadcaster } from './sockets/playback.handlers.js';
 import { registerChatHandlers } from './sockets/chat.handlers.js';
 import { registerAdminHandlers } from './sockets/admin.handlers.js';
 import { healthRoute, roomsRoute } from './http/routes.js';
@@ -48,6 +48,11 @@ export async function createApp() {
 
   // Attach Socket.IO directly to Fastify's underlying HTTP server (Fastify v5)
   const io = createSocketServer(app.server);
+
+  // Per-odaa tsMap broadcaster: her saniye her aktif odanın gerçek konum
+  // haritasını (playback:tsmap) broadcast eder. Drift düzeltme bunu kullanır
+  // (watchparty REC:tsMap modeli). Sunucu yaşam süresince bir kez başlatılır.
+  startTsMapBroadcaster(io);
 
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id}`);

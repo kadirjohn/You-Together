@@ -4,6 +4,11 @@ import { clearSession } from '../lib/session';
 
 export type SyncStatus = 'idle' | 'synced' | 'slightly-off' | 'resyncing' | 'buffering';
 
+// Oda playback durumu — bounce guard için. Remote play/pause uygulanırken
+// ÖNCE set edilir, böylece SDK onStateChange echo'su oda durumuyla uyuşur ve
+// CMD:play/pause re-emit etmez (watchparty roomPaused mantığı).
+export type RoomPlaybackStatus = 'playing' | 'paused' | 'idle';
+
 interface RoomStore {
   room: PublicRoomState | null;
   currentUser: RoomUser | null;
@@ -18,6 +23,14 @@ interface RoomStore {
   meta: VideoMeta | null;
   // Oda bazlı izlenen-videolar listesi (watch list).
   watchlist: WatchedVideo[];
+  // --- Senkron (Faz 1) ---
+  // Oda playback durumu (bounce guard için, oda-authoritative).
+  roomPlaybackStatus: RoomPlaybackStatus;
+  // Per-izleyici GERÇEK oynatma zamanı haritası (sunucudan playback:tsmap).
+  // { userId -> normalize edilmiş saniye }. Drift düzeltme bunu kullanır.
+  tsMap: Record<string, number>;
+  // Lider (admin/owner) userId'si. Drift düzeltme lider konumuna göre.
+  adminUserId: string | null;
 
   setRoom: (room: PublicRoomState | null) => void;
   setCurrentUser: (user: RoomUser | null) => void;
@@ -31,6 +44,9 @@ interface RoomStore {
   setPlayerReady: (v: boolean) => void;
   setMeta: (meta: VideoMeta | null) => void;
   setWatchlist: (videos: WatchedVideo[]) => void;
+  setRoomPlaybackStatus: (status: RoomPlaybackStatus) => void;
+  setTsMap: (tsMap: Record<string, number>) => void;
+  setAdminUserId: (id: string | null) => void;
   updatePlayback: (state: {
     videoId?: string | null;
     status?: string;
@@ -54,6 +70,9 @@ const initialState = {
   playerReady: false,
   meta: null as VideoMeta | null,
   watchlist: [] as WatchedVideo[],
+  roomPlaybackStatus: 'idle' as RoomPlaybackStatus,
+  tsMap: {} as Record<string, number>,
+  adminUserId: null as string | null,
 };
 
 export const useRoomStore = create<RoomStore>((set, get) => ({
@@ -74,6 +93,9 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   setPlayerReady: (v) => set({ playerReady: v }),
   setMeta: (meta) => set({ meta }),
   setWatchlist: (videos) => set({ watchlist: videos }),
+  setRoomPlaybackStatus: (status) => set({ roomPlaybackStatus: status }),
+  setTsMap: (tsMap) => set({ tsMap }),
+  setAdminUserId: (id) => set({ adminUserId: id }),
 
   updatePlayback: (playback) =>
     set((state) => {

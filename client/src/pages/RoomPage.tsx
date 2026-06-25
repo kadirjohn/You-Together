@@ -172,6 +172,15 @@ export default function RoomPage() {
       useRoomStore.getState().setMeta(data.meta ?? null);
       useRoomStore.getState().setServerOffsetMs(data.serverTime - Date.now());
 
+      // Senkron state'i başlat (geç katılan / sayfa yenileme). syncTarget
+      // doğru hedef konumu taşır; player onReady'de buraya seek eder.
+      useRoomStore.getState().setRoomPlaybackStatus(
+        data.syncTarget.status === 'playing' ? 'playing' : data.syncTarget.status === 'paused' ? 'paused' : 'idle',
+      );
+      useRoomStore.getState().setAdminUserId(data.room.playback.updatedBy ?? null);
+      // Yeni (re)join → tsMap temiz başla (eski odanın stale konumları yok).
+      useRoomStore.getState().setTsMap({});
+
       // Save session so this browser remembers the user
       saveSession({
         roomId: roomId!,
@@ -221,6 +230,13 @@ export default function RoomPage() {
         updatedBy: data.updatedBy,
       });
       useRoomStore.getState().setLastRemoteVersion(data.version);
+      // Bounce guard için oda-authoritative playback durumunu güncelle.
+      // (Player bunu onStateChange echo'larını bastırmak için kullanır.)
+      useRoomStore.getState().setRoomPlaybackStatus(
+        data.status === 'playing' ? 'playing' : data.status === 'paused' ? 'paused' : 'idle',
+      );
+      // Admin değişikliği geldiğinde updatedBy = lider; tsMap leader çözümü için sakla.
+      useRoomStore.getState().setAdminUserId(data.updatedBy ?? null);
     };
 
     const handleVideoChanged = (data: {
@@ -244,10 +260,24 @@ export default function RoomPage() {
       });
       // Sunucudan gelen yeni videonun metası (süre + başlık + kanal).
       useRoomStore.getState().setMeta(data.meta ?? null);
+      // Yeni video → eski tsMap'i temizle (stale konumlar gelmesin).
+      useRoomStore.getState().setTsMap({});
+      useRoomStore.getState().setRoomPlaybackStatus(
+        data.state.status === 'playing' ? 'playing' : data.state.status === 'paused' ? 'paused' : 'idle',
+      );
+      useRoomStore.getState().setAdminUserId((data.state as any).updatedBy ?? null);
     };
 
     const handleVideoWatchlist = (videos: WatchedVideo[]) => {
       useRoomStore.getState().setWatchlist(videos);
+    };
+
+    // Sunucudan per-izleyici GERÇEK konum haritası (her 1 sn). Player drift
+    // düzeltme bunu kullanır. Store'a yazmak yeterli — player listener'ı
+    // YouTubePlayer.tsx içindeki playback:tsmap handler'da drift'i uygular.
+    const handleTsMap = (data: { tsMap: Record<string, number>; adminUserId: string | null }) => {
+      useRoomStore.getState().setTsMap(data.tsMap);
+      if (data.adminUserId) useRoomStore.getState().setAdminUserId(data.adminUserId);
     };
 
     const handleChatMessage = (msg: ChatMessage) => {
@@ -312,6 +342,7 @@ export default function RoomPage() {
     socket.on('playback:state', handlePlaybackState);
     socket.on('video:changed', handleVideoChanged);
     socket.on('video:watchlist', handleVideoWatchlist);
+    socket.on('playback:tsmap', handleTsMap);
     socket.on('chat:message', handleChatMessage);
     socket.on('system:message', handleSystemMessage);
     socket.on('user:joined', handleUserJoined);
@@ -326,6 +357,7 @@ export default function RoomPage() {
       socket.off('playback:state', handlePlaybackState);
       socket.off('video:changed', handleVideoChanged);
       socket.off('video:watchlist', handleVideoWatchlist);
+      socket.off('playback:tsmap', handleTsMap);
       socket.off('chat:message', handleChatMessage);
       socket.off('system:message', handleSystemMessage);
       socket.off('user:joined', handleUserJoined);

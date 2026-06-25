@@ -27,6 +27,7 @@ import { generateRoomId, generateUserId, generateMessageId, hashPin, verifyPin }
 import { extractYoutubeVideoId, fetchVideoMeta } from '../utils/youtube.js';
 import { now, computeCurrentRoomTime } from '../utils/time.js';
 import { config } from '../config.js';
+import { clearRoomTsMap } from './playback.handlers.js';
 
 const repo = roomRepository();
 const DISCONNECT_GRACE_SECONDS = 30;
@@ -137,6 +138,7 @@ async function scheduleDisconnectCleanup(userId: string, roomId: string) {
       // If no connected users, delete room
       if (connected.length === 0) {
         await repo.deleteRoom(roomId);
+        clearRoomTsMap(roomId);
       }
 
       broadcastRoomList();
@@ -418,6 +420,7 @@ export function registerRoomHandlers(socket: Socket) {
 
     if (users.length === 0) {
       await repo.deleteRoom(roomId);
+      clearRoomTsMap(roomId);
     }
 
     broadcastRoomList();

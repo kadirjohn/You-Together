@@ -135,6 +135,18 @@ export const playerReadySchema = z.object({
   roomId: z.string().min(1),
 });
 
+// Client her saniye player'ın GERÇEK getCurrentTime() değerini gönderir.
+// Sunucu bunu per-odaa in-memory tsMap'e normalize ederek yazar ve
+// playback:tsmap olarak herkese broadcast eder (watchparty REC:tsMap modeli).
+// Bu, baseTime/baseServerTime ekstrapolasyonuna ek bir "gerçek konum" katmanı:
+// drift düzeltme artık iki serbest-sayan saati değil, gerçek video konumlarını
+// karşılaştırır.
+export const heartbeatSchema = z.object({
+  roomId: z.string().min(1),
+  currentTime: z.number(),
+  clientEventId: z.string().optional(),
+});
+
 export const chatMessageSchema = z.object({
   roomId: z.string().min(1),
   text: z.string().min(1).max(500).trim(),
