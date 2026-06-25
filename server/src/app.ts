@@ -11,6 +11,7 @@ import { registerRoomHandlers } from './sockets/room.handlers.js';
 import { registerPlaybackHandlers, startTsMapBroadcaster } from './sockets/playback.handlers.js';
 import { registerChatHandlers } from './sockets/chat.handlers.js';
 import { registerAdminHandlers } from './sockets/admin.handlers.js';
+import { registerPlaylistHandlers } from './sockets/playlist.handlers.js';
 import { healthRoute, roomsRoute } from './http/routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -65,6 +66,7 @@ export async function createApp() {
     registerPlaybackHandlers(socket);
     registerChatHandlers(socket);
     registerAdminHandlers(socket);
+    registerPlaylistHandlers(socket);
   });
 
   return { app, io };

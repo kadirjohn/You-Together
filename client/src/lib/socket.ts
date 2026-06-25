@@ -95,11 +95,16 @@ export interface PublicRoomState {
   ownerUserId: string;
   playback: {
     videoId: string | null;
+    mediaType: 'youtube' | 'mp4' | 'hls' | null;
+    mediaUrl: string | null;
     status: string;
     baseTime: number;
     baseServerTime: number;
     version: number;
     updatedBy: string | null;
+    playbackRate: number;
+    loop: boolean;
+    subtitle: string | null;
   };
 }
 
@@ -111,6 +116,15 @@ export interface ChatMessage {
   role: string;
   text: string;
   createdAt: number;
+}
+
+export interface PlaylistItem {
+  id: string;
+  url: string;
+  mediaType: 'youtube' | 'mp4' | 'hls' | null;
+  title: string | null;
+  addedBy: { id: string; displayName: string };
+  addedAt: number;
 }
 
 export interface SyncTarget {

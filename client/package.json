@@ -10,10 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "hls.js": "^1.6.16",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-router-dom": "^6.26.0",
     "socket.io-client": "^4.8.0",
+    "srt-webvtt": "^2.0.0",
     "zustand": "^4.5.0"
   },
   "devDependencies": {

@@ -18,6 +18,13 @@ export const PlaybackStatus = {
 } as const;
 export type PlaybackStatus = (typeof PlaybackStatus)[keyof typeof PlaybackStatus];
 
+export const MediaType = {
+  YouTube: 'youtube',
+  Mp4: 'mp4',
+  Hls: 'hls',
+} as const;
+export type MediaType = (typeof MediaType)[keyof typeof MediaType];
+
 export interface RoomUser {
   id: string;
   socketId: string;
@@ -29,12 +36,17 @@ export interface RoomUser {
 }
 
 export interface RoomPlaybackState {
-  videoId: string | null;
+  videoId: string | null; // YouTube videosu için
+  mediaType: MediaType | null; // 'youtube' | 'mp4' | 'hls'
+  mediaUrl: string | null; // mp4/hls için doğrudan URL
   status: PlaybackStatus;
   baseTime: number;
   baseServerTime: number;
   version: number;
   updatedBy: string | null;
+  playbackRate: number; // 0 = auto sync, >0 = fixed shared rate
+  loop: boolean;
+  subtitle: string | null; // altyazı VTT/SRT URL (mp4/hls için)
 }
 
 // YouTube video metadata. Sunucu-taraflı fetch edilir, Redis'te cache'lenir.
@@ -55,6 +67,16 @@ export interface WatchedVideo {
   channel: string | null;
   durationSeconds: number | null;
   thumbnail: string | null;
+  addedBy: { id: string; displayName: string };
+  addedAt: number;
+}
+
+export interface PlaylistItem {
+  id: string;
+  // YouTube veya generic medya URL
+  url: string;
+  mediaType: MediaType | null;
+  title: string | null;
   addedBy: { id: string; displayName: string };
   addedAt: number;
 }
@@ -112,6 +134,13 @@ export const videoChangeSchema = z.object({
   youtubeUrl: z.string().url(),
 });
 
+// Genel medya ayarlama (mp4 / hls). Admin/owner tarafından gönderilir.
+export const mediaSetSchema = z.object({
+  roomId: z.string().min(1),
+  mediaType: z.enum(['mp4', 'hls']),
+  mediaUrl: z.string().url().min(1),
+});
+
 export const playbackEventSchema = z.object({
   roomId: z.string().min(1),
   currentTime: z.number().min(0),
@@ -147,9 +176,43 @@ export const heartbeatSchema = z.object({
   clientEventId: z.string().optional(),
 });
 
+export const playbackRateSchema = z.object({
+  roomId: z.string().min(1),
+  rate: z.number().min(0).max(4),
+  clientEventId: z.string().min(1),
+});
+
+export const loopSchema = z.object({
+  roomId: z.string().min(1),
+  loop: z.boolean(),
+  clientEventId: z.string().min(1),
+});
+
+export const subtitleSchema = z.object({
+  roomId: z.string().min(1),
+  subtitleUrl: z.string().url().nullable(),
+});
+
 export const chatMessageSchema = z.object({
   roomId: z.string().min(1),
   text: z.string().min(1).max(500).trim(),
+});
+
+export const playlistAddSchema = z.object({
+  roomId: z.string().min(1),
+  url: z.string().url().min(1),
+  title: z.string().optional(),
+});
+
+export const playlistRemoveSchema = z.object({
+  roomId: z.string().min(1),
+  itemId: z.string().min(1),
+});
+
+export const playlistMoveSchema = z.object({
+  roomId: z.string().min(1),
+  itemId: z.string().min(1),
+  newIndex: z.number().int().min(0),
 });
 
 export const adminGrantSchema = z.object({

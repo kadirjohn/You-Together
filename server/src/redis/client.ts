@@ -48,5 +48,6 @@ export const RedisKeys = {
   roomPin: (roomId: string) => `room:${roomId}:pin`,
   socketUser: (socketId: string) => `socket:${socketId}`,
   roomVideos: (roomId: string) => `room:${roomId}:videos`,
+  roomPlaylist: (roomId: string) => `room:${roomId}:playlist`,
   youtubeVideo: (videoId: string) => `youtube:video:${videoId}`,
 } as const;

@@ -7,6 +7,9 @@ import {
   syncRequestSchema,
   playerReadySchema,
   heartbeatSchema,
+  playbackRateSchema,
+  loopSchema,
+  subtitleSchema,
   PlaybackStatus,
   RoomRole,
 } from '../rooms/room.types.js';
@@ -159,10 +162,16 @@ export function registerPlaybackHandlers(socket: Socket) {
     if (now() - last < 200) return; // 200ms rate limit for playback events
     (socket.data as any)[key] = now();
 
+    // currentTime 0 ise (ör. klavye space tuşu), mevcut extrapolated konumu
+    // koru — play/pause konumu sıfırlamamalı.
+    const effectiveTime = currentTime > 0
+      ? currentTime
+      : computeCurrentRoomTime(room.playback);
+
     const playback: RoomPlaybackState = {
       ...room.playback,
       status: PlaybackStatus.Playing,
-      baseTime: currentTime,
+      baseTime: effectiveTime,
       baseServerTime: now(),
       version: room.playback.version + 1,
       updatedBy: mapping.userId,
@@ -175,7 +184,7 @@ export function registerPlaybackHandlers(socket: Socket) {
     // eski stale konumlar gelmesin diye tsMap'i temizle ve admin'le başlat.
     const entry = getOrCreateRoomTsMap(roomId);
     entry.adminUserId = mapping.userId;
-    entry.tsMap = { [mapping.userId]: currentTime };
+    entry.tsMap = { [mapping.userId]: effectiveTime };
     entry.lastEmit = now();
 
     broadcastToRoom(roomId, 'playback:state', {
@@ -217,10 +226,15 @@ export function registerPlaybackHandlers(socket: Socket) {
       return;
     }
 
+    // currentTime 0 ise (ör. klavye space tuşu), mevcut extrapolated konumu koru.
+    const effectiveTime = currentTime > 0
+      ? currentTime
+      : computeCurrentRoomTime(room.playback);
+
     const playback: RoomPlaybackState = {
       ...room.playback,
       status: PlaybackStatus.Paused,
-      baseTime: currentTime,
+      baseTime: effectiveTime,
       baseServerTime: now(),
       version: room.playback.version + 1,
       updatedBy: mapping.userId,
@@ -230,7 +244,7 @@ export function registerPlaybackHandlers(socket: Socket) {
 
     const entry = getOrCreateRoomTsMap(roomId);
     entry.adminUserId = mapping.userId;
-    entry.tsMap = { [mapping.userId]: currentTime };
+    entry.tsMap = { [mapping.userId]: effectiveTime };
     entry.lastEmit = now();
 
     broadcastToRoom(roomId, 'playback:state', {
@@ -298,6 +312,90 @@ export function registerPlaybackHandlers(socket: Socket) {
       clientEventId,
       serverTime: now(),
     });
+  });
+
+  // --- Playback: Rate (admin/owner only) ---
+  socket.on('playback:rate', async (payload: unknown) => {
+    const parsed = playbackRateSchema.safeParse(payload);
+    if (!parsed.success) return;
+
+    const { roomId, rate } = parsed.data;
+    const room = await repo.getRoom(roomId);
+    if (!room) return;
+
+    const mapping = await repo.getSocketUserMap(socket.id);
+    if (!mapping || mapping.roomId !== roomId) return;
+
+    const requester = await repo.getUser(roomId, mapping.userId);
+    if (!requester || (requester.role !== RoomRole.Owner && requester.role !== RoomRole.Admin)) {
+      socket.emit('room:error', { message: 'Sadece admin oynatma hızını değiştirebilir.' });
+      return;
+    }
+
+    const playback: RoomPlaybackState = {
+      ...room.playback,
+      playbackRate: rate,
+      updatedBy: mapping.userId,
+    };
+    await repo.updatePlaybackState(roomId, playback);
+
+    broadcastToRoom(roomId, 'playback:rate', { rate });
+  });
+
+  // --- Playback: Loop (admin/owner only) ---
+  socket.on('playback:loop', async (payload: unknown) => {
+    const parsed = loopSchema.safeParse(payload);
+    if (!parsed.success) return;
+
+    const { roomId, loop } = parsed.data;
+    const room = await repo.getRoom(roomId);
+    if (!room) return;
+
+    const mapping = await repo.getSocketUserMap(socket.id);
+    if (!mapping || mapping.roomId !== roomId) return;
+
+    const requester = await repo.getUser(roomId, mapping.userId);
+    if (!requester || (requester.role !== RoomRole.Owner && requester.role !== RoomRole.Admin)) {
+      socket.emit('room:error', { message: 'Sadece admin loop ayarını değiştirebilir.' });
+      return;
+    }
+
+    const playback: RoomPlaybackState = {
+      ...room.playback,
+      loop,
+      updatedBy: mapping.userId,
+    };
+    await repo.updatePlaybackState(roomId, playback);
+
+    broadcastToRoom(roomId, 'playback:loop', { loop });
+  });
+
+  // --- Subtitle: Set (admin/owner only, mp4/hls için) ---
+  socket.on('subtitle:set', async (payload: unknown) => {
+    const parsed = subtitleSchema.safeParse(payload);
+    if (!parsed.success) return;
+
+    const { roomId, subtitleUrl } = parsed.data;
+    const room = await repo.getRoom(roomId);
+    if (!room) return;
+
+    const mapping = await repo.getSocketUserMap(socket.id);
+    if (!mapping || mapping.roomId !== roomId) return;
+
+    const requester = await repo.getUser(roomId, mapping.userId);
+    if (!requester || (requester.role !== RoomRole.Owner && requester.role !== RoomRole.Admin)) {
+      socket.emit('room:error', { message: 'Sadece admin altyazı yükleyebilir.' });
+      return;
+    }
+
+    const playback: RoomPlaybackState = {
+      ...room.playback,
+      subtitle: subtitleUrl,
+      updatedBy: mapping.userId,
+    };
+    await repo.updatePlaybackState(roomId, playback);
+
+    broadcastToRoom(roomId, 'subtitle:changed', { subtitleUrl });
   });
 
   // --- Playback: Heartbeat (client → server, GERÇEK getCurrentTime) ---

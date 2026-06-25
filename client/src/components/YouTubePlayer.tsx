@@ -58,7 +58,8 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   const initialSyncDone = useRef(false);
   const lastSeekCheckTime = useRef(0); // admin seek-jump detection için
   const lastSeekCheckRealTime = useRef(0);
-  const lastAppliedPlaybackRate = useRef(1); // drift düzeltme rate değişimi dedup
+  const lastAppliedPlaybackRate = useRef(1); // drift düzeltme / fixed rate dedup
+  const loopEnabled = useRef(false); // playback:loop state
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -340,10 +341,21 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
 
             // videoEnded — SDK ENDED'i güvenilir teslim eder (raw postMessage'dan farklı)
             if (st === YT.PlayerState.ENDED) {
+              if (loopEnabled.current) {
+                videoEndedRef.current = false;
+                setVideoEnded(false);
+                applyRemoteState('playing', 0, 500);
+                return;
+              }
               videoEndedRef.current = true;
               setVideoEnded(true);
               setUiPlaying(false);
               setBuffering(false);
+              // Auto-advance playlist: admin ise listedekine geç
+              if (admin) {
+                const rid = roomIdRef.current;
+                if (rid) getSocket().emit('playlist:next', { roomId: rid });
+              }
               return;
             }
             if (st === YT.PlayerState.CUED) {
@@ -679,9 +691,36 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       );
       useRoomStore.getState().setLastRemoteVersion(data.version || 0);
     };
+
+    const handlePlaybackRate = (data: { rate: number }) => {
+      // rate === 0: auto sync (dynamic catch-up). >0: fixed shared rate.
+      const fixedRate = data.rate;
+      if (fixedRate > 0) {
+        lastAppliedPlaybackRate.current = fixedRate;
+        safeCall(() => playerRef.current?.setPlaybackRate(fixedRate));
+      } else {
+        // auto moda dönüş: 1.0x'e reset, dynamic catch-up poll'da devam eder
+        lastAppliedPlaybackRate.current = 1;
+        safeCall(() => playerRef.current?.setPlaybackRate(1));
+      }
+      useRoomStore.getState().updatePlayback({ playbackRate: fixedRate });
+    };
+
+    const handlePlaybackLoop = (data: { loop: boolean }) => {
+      loopEnabled.current = data.loop;
+      safeCall(() => playerRef.current?.setLoop(data.loop));
+      useRoomStore.getState().updatePlayback({ loop: data.loop });
+    };
+
     socket.on('sync:command', handleSyncCommand);
-    return () => { socket.off('sync:command', handleSyncCommand); };
-  }, [roomIdFromStore, seekTo, startPlayback, pausePlayback]);
+    socket.on('playback:rate', handlePlaybackRate);
+    socket.on('playback:loop', handlePlaybackLoop);
+    return () => {
+      socket.off('sync:command', handleSyncCommand);
+      socket.off('playback:rate', handlePlaybackRate);
+      socket.off('playback:loop', handlePlaybackLoop);
+    };
+  }, [roomIdFromStore, seekTo, startPlayback, pausePlayback, safeCall]);
 
   // --- Version watch: playback:state (admin play/pause/seek) → diğerlerine uygula ---
   const playbackVersion = useRoomStore((s) => s.room?.playback.version ?? 0);

@@ -4,13 +4,16 @@ import { getSocket } from '../lib/socket';
 import { useRoomStore } from '../stores/room.store';
 import { useUIStore } from '../stores/ui.store';
 import { getSession, saveSession, clearSession } from '../lib/session';
-import type { PublicRoomState, RoomUser, ChatMessage, SyncTarget, VideoMeta, WatchedVideo } from '../lib/socket';
+import type { PublicRoomState, RoomUser, ChatMessage, SyncTarget, VideoMeta, WatchedVideo, PlaylistItem } from '../lib/socket';
 import YouTubePlayer, { SyncBadge } from '../components/YouTubePlayer';
+import HtmlPlayer from '../components/HtmlPlayer';
 import ChatPanel from '../components/ChatPanel';
 import VideoInputBar from '../components/VideoInputBar';
 import UserList from '../components/UserList';
 import ShareRoomLink from '../components/ShareRoomLink';
 import WatchList from '../components/WatchList';
+import PlaylistPanel from '../components/PlaylistPanel';
+import PlaybackControls from '../components/PlaybackControls';
 
 /* ── Inline SVG Icons ── */
 const UserIcon = () => (
@@ -91,6 +94,7 @@ export default function RoomPage() {
         users: RoomUser[];
         chatHistory: ChatMessage[];
         watchlist?: WatchedVideo[];
+        playlist?: PlaylistItem[];
         meta?: VideoMeta | null;
         serverTime: number;
         syncTarget: SyncTarget;
@@ -103,6 +107,7 @@ export default function RoomPage() {
         useRoomStore.getState().setUsers(data.users);
         useRoomStore.getState().setChatHistory(data.chatHistory);
         useRoomStore.getState().setWatchlist(data.watchlist ?? []);
+        useRoomStore.getState().setPlaylist(data.playlist ?? []);
         useRoomStore.getState().setMeta(data.meta ?? null);
         useRoomStore.getState().setServerOffsetMs(data.serverTime - Date.now());
         // Update session displayName in case it changed
@@ -160,6 +165,7 @@ export default function RoomPage() {
       users: RoomUser[];
       chatHistory: ChatMessage[];
       watchlist?: WatchedVideo[];
+      playlist?: PlaylistItem[];
       meta?: VideoMeta | null;
       serverTime: number;
       syncTarget: SyncTarget;
@@ -169,6 +175,7 @@ export default function RoomPage() {
       useRoomStore.getState().setUsers(data.users);
       useRoomStore.getState().setChatHistory(data.chatHistory);
       useRoomStore.getState().setWatchlist(data.watchlist ?? []);
+      useRoomStore.getState().setPlaylist(data.playlist ?? []);
       useRoomStore.getState().setMeta(data.meta ?? null);
       useRoomStore.getState().setServerOffsetMs(data.serverTime - Date.now());
 
@@ -272,6 +279,49 @@ export default function RoomPage() {
       useRoomStore.getState().setWatchlist(videos);
     };
 
+    const handlePlaylistUpdate = (playlist: PlaylistItem[]) => {
+      useRoomStore.getState().setPlaylist(playlist);
+    };
+
+    const handleMediaChanged = (data: {
+      mediaType: 'mp4' | 'hls';
+      mediaUrl: string;
+      state: {
+        mediaType: 'mp4' | 'hls';
+        mediaUrl: string | null;
+        status: string;
+        baseTime: number;
+        baseServerTime: number;
+        version: number;
+        updatedBy: string | null;
+      };
+    }) => {
+      useRoomStore.getState().updatePlayback({
+        videoId: null,
+        mediaType: data.mediaType,
+        mediaUrl: data.mediaUrl,
+        status: data.state.status,
+        baseTime: data.state.baseTime,
+        baseServerTime: data.state.baseServerTime,
+        version: data.state.version,
+        updatedBy: data.state.updatedBy,
+      });
+      useRoomStore.getState().setMeta(null);
+      useRoomStore.getState().setTsMap({});
+      useRoomStore.getState().setRoomPlaybackStatus(
+        data.state.status === 'playing' ? 'playing' : data.state.status === 'paused' ? 'paused' : 'idle',
+      );
+      useRoomStore.getState().setAdminUserId(data.state.updatedBy ?? null);
+    };
+
+    const handlePlaybackRate = (data: { rate: number }) => {
+      useRoomStore.getState().updatePlayback({ playbackRate: data.rate });
+    };
+
+    const handlePlaybackLoop = (data: { loop: boolean }) => {
+      useRoomStore.getState().updatePlayback({ loop: data.loop });
+    };
+
     // Sunucudan per-izleyici GERÇEK konum haritası (her 1 sn). Player drift
     // düzeltme bunu kullanır. Store'a yazmak yeterli — player listener'ı
     // YouTubePlayer.tsx içindeki playback:tsmap handler'da drift'i uygular.
@@ -342,6 +392,10 @@ export default function RoomPage() {
     socket.on('playback:state', handlePlaybackState);
     socket.on('video:changed', handleVideoChanged);
     socket.on('video:watchlist', handleVideoWatchlist);
+    socket.on('playlist:update', handlePlaylistUpdate);
+    socket.on('media:changed', handleMediaChanged);
+    socket.on('playback:rate', handlePlaybackRate);
+    socket.on('playback:loop', handlePlaybackLoop);
     socket.on('playback:tsmap', handleTsMap);
     socket.on('chat:message', handleChatMessage);
     socket.on('system:message', handleSystemMessage);
@@ -357,6 +411,10 @@ export default function RoomPage() {
       socket.off('playback:state', handlePlaybackState);
       socket.off('video:changed', handleVideoChanged);
       socket.off('video:watchlist', handleVideoWatchlist);
+      socket.off('playlist:update', handlePlaylistUpdate);
+      socket.off('media:changed', handleMediaChanged);
+      socket.off('playback:rate', handlePlaybackRate);
+      socket.off('playback:loop', handlePlaybackLoop);
       socket.off('playback:tsmap', handleTsMap);
       socket.off('chat:message', handleChatMessage);
       socket.off('system:message', handleSystemMessage);
@@ -371,6 +429,50 @@ export default function RoomPage() {
       // Only explicit "back" button click emits room:leave.
     };
   }, [roomId]);
+
+  // --- Klavye kısayolları (input/textarea focus değilken) ---
+  // space: admin toggle play, ArrowRight/Left: ±10s (admin seek emit),
+  // f: fullscreen toggle (player container), m: mute (yerel, broadcast değil).
+  useEffect(() => {
+    if (!joined) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const el = document.activeElement;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (el as HTMLElement)?.isContentEditable) return;
+      const state = useRoomStore.getState();
+      const room = state.room;
+      if (!room) return;
+      const isAdmin = state.currentUser?.role === 'owner' || state.currentUser?.role === 'admin';
+      const socket = getSocket();
+      const eid = () => `evt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+      if (e.key === ' ') {
+        e.preventDefault();
+        if (isAdmin) {
+          const playing = state.roomPlaybackStatus === 'playing';
+          if (playing) {
+            socket.emit('playback:pause', { roomId: room.id, currentTime: 0, clientEventId: eid() });
+          } else {
+            socket.emit('playback:play', { roomId: room.id, currentTime: 0, clientEventId: eid() });
+          }
+        }
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        const container = document.querySelector('.aspect-video') as HTMLElement | null;
+        if (container) {
+          if (document.fullscreenElement) document.exitFullscreen();
+          else container.requestFullscreen?.();
+        }
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        // Mute toggle: video elementini bul
+        const video = document.querySelector('video') as HTMLVideoElement | null;
+        if (video) video.muted = !video.muted;
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [joined]);
 
   const handleJoin = () => {
     if (!displayName.trim()) {
@@ -564,6 +666,8 @@ export default function RoomPage() {
           <div className="flex-1 min-w-0">
             {/* Admin Video Input */}
             <VideoInputBar />
+            {/* Admin Playback Controls (rate / loop / subtitle) */}
+            <PlaybackControls />
 
             {/* Senkron badge — player'ın hemen üstünde, sağa yaslı.
                 Player içinde değil ki native tuşları (kalite/altyazı/fullscreen)
@@ -574,14 +678,22 @@ export default function RoomPage() {
 
             {/* Player */}
             <div className="relative bg-black rounded-3xl overflow-hidden border-[3px] border-white/5 aspect-video shadow-cartoon-card">
-              <YouTubePlayer videoId={room.playback.videoId} />
-              {!room.playback.videoId && (
+              {room.playback.mediaType === 'youtube' && (
+                <YouTubePlayer videoId={room.playback.videoId} />
+              )}
+              {(room.playback.mediaType === 'mp4' || room.playback.mediaType === 'hls') && room.playback.mediaUrl && (
+                <HtmlPlayer
+                  mediaType={room.playback.mediaType}
+                  mediaUrl={room.playback.mediaUrl}
+                />
+              )}
+              {!room.playback.mediaType && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/80">
                   <div className="text-center animate-bounce-in">
                     <div className="text-6xl mb-4 animate-float">🎥</div>
-                    <p className="text-text-muted text-lg font-bold">Henüz video eklenmedi</p>
+                    <p className="text-text-muted text-lg font-bold">Henüz medya eklenmedi</p>
                     <p className="text-text-muted/60 text-sm mt-1 font-semibold">
-                      Admin bir YouTube linki eklediğinde video burada görünecek.
+                      Admin bir YouTube linki veya mp4/m3u8 URL'i eklediğinde burada görünecek.
                     </p>
                   </div>
                 </div>
@@ -608,8 +720,9 @@ export default function RoomPage() {
 // Right Panel — Sohbet / İzlenenler sekmeli panel
 // ============================================================
 function RightPanel() {
-  const [tab, setTab] = useState<'chat' | 'watchlist'>('chat');
+  const [tab, setTab] = useState<'chat' | 'watchlist' | 'playlist'>('chat');
   const watchlistCount = useRoomStore((s) => s.watchlist.length);
+  const playlistCount = useRoomStore((s) => s.playlist.length);
 
   return (
     <div className="bg-bg-panel border-[3px] border-white/5 rounded-3xl flex flex-col h-[calc(100vh-7rem)] lg:h-[calc(100vh-6rem)] shadow-cartoon-card overflow-hidden">
@@ -617,7 +730,7 @@ function RightPanel() {
       <div className="flex border-b-[3px] border-white/5">
         <button
           onClick={() => setTab('chat')}
-          className={`flex-1 px-4 py-3 flex items-center justify-center gap-2 font-extrabold text-sm transition-all duration-200 ${
+          className={`flex-1 px-3 py-3 flex items-center justify-center gap-1.5 font-extrabold text-xs transition-all duration-200 ${
             tab === 'chat'
               ? 'text-red-main border-b-[3px] border-red-main -mb-[3px] bg-red-main/5'
               : 'text-text-muted hover:text-text-main'
@@ -630,9 +743,9 @@ function RightPanel() {
           Sohbet
         </button>
         <button
-          onClick={() => setTab('watchlist')}
-          className={`flex-1 px-4 py-3 flex items-center justify-center gap-2 font-extrabold text-sm transition-all duration-200 ${
-            tab === 'watchlist'
+          onClick={() => setTab('playlist')}
+          className={`flex-1 px-3 py-3 flex items-center justify-center gap-1.5 font-extrabold text-xs transition-all duration-200 ${
+            tab === 'playlist'
               ? 'text-red-main border-b-[3px] border-red-main -mb-[3px] bg-red-main/5'
               : 'text-text-muted hover:text-text-main'
           }`}
@@ -640,6 +753,25 @@ function RightPanel() {
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round"
               d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+          </svg>
+          Playlist
+          {playlistCount > 0 && (
+            <span className="text-xs bg-bg-card text-text-muted px-2 py-0.5 rounded-lg font-bold border border-white/5">
+              {playlistCount}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setTab('watchlist')}
+          className={`flex-1 px-3 py-3 flex items-center justify-center gap-1.5 font-extrabold text-xs transition-all duration-200 ${
+            tab === 'watchlist'
+              ? 'text-red-main border-b-[3px] border-red-main -mb-[3px] bg-red-main/5'
+              : 'text-text-muted hover:text-text-main'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
           </svg>
           İzlenenler
           {watchlistCount > 0 && (
@@ -652,7 +784,9 @@ function RightPanel() {
 
       {/* Tab content */}
       <div className="flex-1 flex flex-col min-h-0">
-        {tab === 'chat' ? <ChatPanel embedded /> : <WatchList />}
+        {tab === 'chat' && <ChatPanel embedded />}
+        {tab === 'watchlist' && <WatchList />}
+        {tab === 'playlist' && <PlaylistPanel />}
       </div>
     </div>
   );

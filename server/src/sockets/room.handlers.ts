@@ -15,6 +15,7 @@ import {
   clientHeartbeatSchema,
   PlaybackStatus,
   RoomRole,
+  MediaType,
 } from '../rooms/room.types.js';
 import type {
   RoomPlaybackState,
@@ -168,11 +169,16 @@ export function registerRoomHandlers(socket: Socket) {
 
     const playbackState: RoomPlaybackState = {
       videoId,
+      mediaType: videoId ? MediaType.YouTube : null,
+      mediaUrl: null,
       status: PlaybackStatus.Idle,
       baseTime: 0,
       baseServerTime: now(),
       version: 1,
       updatedBy: userId,
+      playbackRate: 0,
+      loop: false,
+      subtitle: null,
     };
 
     const roomRecord = {
@@ -310,6 +316,7 @@ export function registerRoomHandlers(socket: Socket) {
       const publicRoom = await buildPublicRoomState(roomId);
       const chatHistory = await repo.getChatMessages(roomId);
       const watchlist = await repo.getWatchedVideos(roomId);
+      const playlist = await repo.getPlaylist(roomId);
       const meta = await getCurrentVideoMeta(room.playback.videoId);
       const targetTime = computeCurrentRoomTime(room.playback);
 
@@ -319,6 +326,7 @@ export function registerRoomHandlers(socket: Socket) {
         users,
         chatHistory,
         watchlist,
+        playlist,
         meta,
         serverTime: now(),
         syncTarget: {
@@ -353,6 +361,7 @@ export function registerRoomHandlers(socket: Socket) {
     const publicRoom = await buildPublicRoomState(roomId);
     const chatHistory = await repo.getChatMessages(roomId);
     const watchlist = await repo.getWatchedVideos(roomId);
+    const playlist = await repo.getPlaylist(roomId);
     const meta = await getCurrentVideoMeta(room.playback.videoId);
     const targetTime = computeCurrentRoomTime(room.playback);
 
@@ -362,6 +371,7 @@ export function registerRoomHandlers(socket: Socket) {
       users: updatedUsers,
       chatHistory,
       watchlist,
+      playlist,
       meta,
       serverTime: now(),
       syncTarget: {
@@ -480,6 +490,7 @@ export function registerRoomHandlers(socket: Socket) {
     const publicRoom = await buildPublicRoomState(roomId);
     const chatHistory = await repo.getChatMessages(roomId);
     const watchlist = await repo.getWatchedVideos(roomId);
+    const playlist = await repo.getPlaylist(roomId);
     const meta = await getCurrentVideoMeta(room.playback.videoId);
     const targetTime = computeCurrentRoomTime(room.playback);
 
@@ -489,6 +500,7 @@ export function registerRoomHandlers(socket: Socket) {
       users,
       chatHistory,
       watchlist,
+      playlist,
       meta,
       serverTime: now(),
       syncTarget: {

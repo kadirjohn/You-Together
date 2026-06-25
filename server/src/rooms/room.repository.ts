@@ -1,6 +1,6 @@
 import { getRedis, RedisKeys } from '../redis/client.js';
 import { config } from '../config.js';
-import type { RoomRecord, RoomUser, ChatMessage, RoomPlaybackState, WatchedVideo } from './room.types.js';
+import type { RoomRecord, RoomUser, ChatMessage, RoomPlaybackState, WatchedVideo, PlaylistItem } from './room.types.js';
 import { now } from '../utils/time.js';
 
 export function roomRepository() {
@@ -186,6 +186,54 @@ export function roomRepository() {
 
     async clearWatchedVideos(roomId: string): Promise<void> {
       await redis.del(RedisKeys.roomVideos(roomId));
+    },
+
+    // --- Playlist / kuyruk ---
+
+    async getPlaylist(roomId: string): Promise<PlaylistItem[]> {
+      const raw = await redis.get(RedisKeys.roomPlaylist(roomId));
+      if (!raw) return [];
+      try { return JSON.parse(raw) as PlaylistItem[]; } catch { return []; }
+    },
+
+    async savePlaylist(roomId: string, playlist: PlaylistItem[]): Promise<void> {
+      await redis.set(
+        RedisKeys.roomPlaylist(roomId),
+        JSON.stringify(playlist),
+        'EX',
+        config.roomActiveTtlSeconds,
+      );
+    },
+
+    async addPlaylistItem(roomId: string, item: PlaylistItem): Promise<PlaylistItem[]> {
+      const playlist = await this.getPlaylist(roomId);
+      playlist.push(item);
+      await this.savePlaylist(roomId, playlist);
+      return playlist;
+    },
+
+    async removePlaylistItem(roomId: string, itemId: string): Promise<PlaylistItem[] | null> {
+      const playlist = await this.getPlaylist(roomId);
+      const idx = playlist.findIndex((i) => i.id === itemId);
+      if (idx < 0) return null;
+      playlist.splice(idx, 1);
+      await this.savePlaylist(roomId, playlist);
+      return playlist;
+    },
+
+    async movePlaylistItem(
+      roomId: string,
+      itemId: string,
+      newIndex: number,
+    ): Promise<PlaylistItem[] | null> {
+      const playlist = await this.getPlaylist(roomId);
+      const idx = playlist.findIndex((i) => i.id === itemId);
+      if (idx < 0) return null;
+      const [item] = playlist.splice(idx, 1);
+      const clamped = Math.max(0, Math.min(newIndex, playlist.length));
+      playlist.splice(clamped, 0, item);
+      await this.savePlaylist(roomId, playlist);
+      return playlist;
     },
 
     async getAllRooms(): Promise<RoomRecord[]> {

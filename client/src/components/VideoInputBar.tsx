@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { getSocket } from '../lib/socket';
 import { useRoomStore } from '../stores/room.store';
 import { useUIStore } from '../stores/ui.store';
+import { detectMediaType } from '../lib/player';
 
 export default function VideoInputBar() {
   const currentUser = useRoomStore((s) => s.currentUser);
@@ -29,10 +30,25 @@ export default function VideoInputBar() {
 
     socket.on('room:error', errorHandler);
 
-    socket.emit('video:change', {
-      roomId: room.id,
-      youtubeUrl: url.trim(),
-    });
+    const trimmed = url.trim();
+    const mediaType = detectMediaType(trimmed);
+
+    if (mediaType === 'mp4' || mediaType === 'hls') {
+      socket.emit('media:set', {
+        roomId: room.id,
+        mediaType,
+        mediaUrl: trimmed,
+      });
+    } else if (mediaType === 'youtube') {
+      socket.emit('video:change', {
+        roomId: room.id,
+        youtubeUrl: trimmed,
+      });
+    } else {
+      addToast('Geçerli bir YouTube, mp4 veya m3u8 linki gir.', 'error');
+      setLoading(false);
+      return;
+    }
 
     setUrl('');
 
@@ -51,12 +67,12 @@ export default function VideoInputBar() {
       <div className="relative flex-1 input-icon-group">
         <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none input-icon z-10">
           <svg className="w-5 h-5 text-red-main" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M10 15l5.19-3L10 9v6m11.56-7.83c.13.47.22 1.1.28 1.9.07.8.1 1.49.1 2.09L22 12c0 2.19-.16 3.8-.44 4.83-.25.9-.83 1.48-1.73 1.73-.47.13-1.33.22-2.65.28-1.3.07-2.49.1-3.59.1L12 19c-4.19 0-6.8-.16-7.83-.44-.9-.25-1.48-.83-1.73-1.73-.13-.47-.22-1.1-.28-1.9-.07-.8-.1-1.49-.1-2.09L2 12c0-2.19.16-3.8.44-4.83.25-.9.83-1.48 1.73-1.73.47-.13 1.33-.22 2.65-.28 1.3-.07 2.49-.1 3.59-.1L12 5c4.19 0 6.8.16 7.83.44.9.25 1.48.83 1.73 1.73z" />
+            <path d="M10 15l5.19-3L10 9v6m11.56-7.83c.13.47.22 1.1.28 1.9.07.8.1 1.49.1 2.09L22 12c0 2.19-.16 3.8-.44 4.83-.25.9-.83 1.48-1.73 1.73-.47.13-1.33.22-2.65.28-1.3.07-2.49.1-3.59.1L12 19c-4.19 0-6.8-.16-7.83-.44-.9-.25-1.48-.83-1.73-1.73-.13-.47-.22-1.1.28-1.9-.07-.8-.1-1.49-.1-2.09L2 12c0-2.19.16-3.8.44-4.83.25-.9.83-1.48 1.73-1.73.47-.13 1.33-.22 2.65-.28 1.3.07-2.49.1-3.59.1L12 5c4.19 0-6.8.16-7.83.44-.9.25-1.48.83-1.73 1.73z" />
           </svg>
         </div>
         <input
           type="text"
-          placeholder="YouTube linkini yapıştır"
+          placeholder="YouTube, mp4 veya m3u8 linki yapıştır"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={handleKeyDown}

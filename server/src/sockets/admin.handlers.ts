@@ -3,8 +3,10 @@ import { roomRepository } from '../rooms/room.repository.js';
 import {
   adminGrantSchema,
   videoChangeSchema,
+  mediaSetSchema,
   RoomRole,
   PlaybackStatus,
+  MediaType,
 } from '../rooms/room.types.js';
 import type { RoomPlaybackState, RoomUser } from '../rooms/room.types.js';
 import { extractYoutubeVideoId, fetchVideoMeta } from '../utils/youtube.js';
@@ -159,11 +161,16 @@ export function registerAdminHandlers(socket: Socket) {
 
     const playback: RoomPlaybackState = {
       videoId,
+      mediaType: MediaType.YouTube,
+      mediaUrl: null,
       status: PlaybackStatus.Playing,
       baseTime: 0,
       baseServerTime: now(),
       version: 1,
       updatedBy: user.id,
+      playbackRate: 0,
+      loop: false,
+      subtitle: null,
     };
 
     await repo.updatePlaybackState(roomId, playback);
@@ -195,6 +202,59 @@ export function registerAdminHandlers(socket: Socket) {
     broadcastToRoom(roomId, 'system:message', {
       id: generateMessageId(),
       text: `${user.displayName} yeni videoyu başlattı.`,
+      createdAt: now(),
+    });
+  });
+
+  // --- Media: Set (mp4 / hls direct URL) ---
+  socket.on('media:set', async (payload: unknown) => {
+    const parsed = mediaSetSchema.safeParse(payload);
+    if (!parsed.success) {
+      socket.emit('room:error', { message: 'Geçerli bir medya URL\'si gir.' });
+      return;
+    }
+
+    const { roomId, mediaType, mediaUrl } = parsed.data;
+
+    const mapping = await repo.getSocketUserMap(socket.id);
+    if (!mapping || mapping.roomId !== roomId) return;
+
+    const user = await repo.getUser(roomId, mapping.userId);
+    if (!user) return;
+
+    if (user.role !== RoomRole.Owner && user.role !== RoomRole.Admin) {
+      socket.emit('room:error', { message: 'Medya değiştirme yetkiniz yok.' });
+      return;
+    }
+
+    const room = await repo.getRoom(roomId);
+    if (!room) return;
+
+    const playback: RoomPlaybackState = {
+      videoId: null,
+      mediaType: mediaType === 'mp4' ? MediaType.Mp4 : MediaType.Hls,
+      mediaUrl,
+      status: PlaybackStatus.Playing,
+      baseTime: 0,
+      baseServerTime: now(),
+      version: room.playback.version + 1,
+      updatedBy: user.id,
+      playbackRate: 0,
+      loop: false,
+      subtitle: null,
+    };
+
+    await repo.updatePlaybackState(roomId, playback);
+
+    broadcastToRoom(roomId, 'media:changed', {
+      mediaType,
+      mediaUrl,
+      state: playback,
+    });
+
+    broadcastToRoom(roomId, 'system:message', {
+      id: generateMessageId(),
+      text: `${user.displayName} yeni medya başlattı.`,
       createdAt: now(),
     });
   });
