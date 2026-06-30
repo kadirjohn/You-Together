@@ -1,34 +1,32 @@
 # You Together 🎬
 
-YouTube videolarını arkadaşlarınla aynı anda izle. Self-hosted watch party uygulaması.
+YouTube videolarını başkalarıyla beraber aynı anda senkronize şekilde izleyebilmenizi sağlayan bir web sitesi.
 
 ## Özellikler
 
-- 📺 YouTube video embed ile watch party
-- 🔒 PIN korumalı odalar
-- 👥 Maksimum 10 kişi
-- 💬 Real-time chat
-- ⏯️ Senkronize play/pause/seek
-- 👑 Admin/owner rol sistemi
-- 🎨 Dark red glowing tema
-- 🐳 Docker Compose ile kolay kurulum
+- YouTube video embed
+- Oda oluşturma ve paylaşma
+- Sohbet etme
+- Videolar senkronize oynatılır ve video play/pause edildiğinde de karşı tarafa iletilir
+- Admin/izleyici şeklinde farklı kullanıcı ayrımı
+- Docker Compose ile self hosted olarak da kullanılabilir
 
 ## Hızlı Başlangıç
 
 ### Gereksinimler
 
 - Node.js 22+
-- Redis (veya Docker)
+- Redis
 - npm
 
 ### Geliştirme
 
 ```bash
-# Repo'yu klonla
+# Repo'yu klonlayın
 git clone <repo-url>
 cd you-together
 
-# Redis başlat (Docker ile)
+# Docker ile Redis'i başlatın
 docker compose -f docker-compose.dev.yml up -d
 
 # Backend
@@ -37,7 +35,7 @@ cp ../.env.example .env
 npm install
 npm run dev
 
-# Frontend (yeni terminal)
+# Frontend
 cd client
 npm install
 npm run dev
@@ -46,7 +44,7 @@ npm run dev
 Frontend: http://localhost:5173
 Backend: http://localhost:3000
 
-### Docker ile Production
+### Docker ile kullanmak isterseniz
 
 ```bash
 # .env dosyasını oluştur
@@ -85,13 +83,8 @@ Uygulama: http://localhost:3000
 
 ## Kullanım
 
-1. Siteyi aç, "Oda Oluştur"a tıkla
-2. Oda adı, PIN ve görünen adını gir
-3. Oluşan linki arkadaşlarınla paylaş
-4. Arkadaşların linke tıklasın, PIN ve ad girsin
-5. Admin YouTube linki yapıştırsın
-6. Beraber izleyin! 🍿
-
-## Lisans
-
-MIT
+1. Sitede, "Oda Oluştur"a tıklayın
+2. Oda adı, PIN ve görünen adını girin
+3. Oluşan linki arkadaşlarınla paylaşın
+4. Arkadaşlarınız linke tıklasın, PIN ve ad girsin
+5. Admin YouTube linki ekledikten sonra video izlemeye başlalayabilirsiniz
