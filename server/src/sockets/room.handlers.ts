@@ -171,7 +171,9 @@ export function registerRoomHandlers(socket: Socket) {
       videoId,
       mediaType: videoId ? MediaType.YouTube : null,
       mediaUrl: null,
-      status: PlaybackStatus.Idle,
+      // Video ile oluşturulduysa Playing başlat (Idle değil) — aksi halde
+      // client onReady'de applyRemoteState('idle') çağırıp oynatmaz, siyah ekran.
+      status: videoId ? PlaybackStatus.Playing : PlaybackStatus.Idle,
       baseTime: 0,
       baseServerTime: now(),
       version: 1,

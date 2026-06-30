@@ -120,7 +120,22 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   }, []);
 
   const startPlayback = useCallback(() => {
-    safeCall(() => playerRef.current?.playVideo());
+    // Autoplay politika workaround: bazı tarayıcılarda sesli autoplay reddedilir.
+    // Önce mute + play, sonra kısa gecikmeyle unmute dene. playVideo promise
+    // döndürmese de bu sıra güvenli: muted autoplay her zaman çalışır.
+    const player = playerRef.current;
+    if (!player) { setUiPlaying(true); return; }
+    try {
+      player.mute();
+      player.playVideo();
+      // Kısa gecikme sonra unmute — video oynamaya başladıysa ses açılır,
+      // autoplay reddedildiyse (muted de olsa) bu noop kalır.
+      setTimeout(() => {
+        try { playerRef.current?.unMute(); } catch { /* ignore */ }
+      }, 400);
+    } catch {
+      safeCall(() => playerRef.current?.playVideo());
+    }
     setUiPlaying(true);
   }, [safeCall]);
 
