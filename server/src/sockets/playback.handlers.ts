@@ -185,6 +185,7 @@ export function registerPlaybackHandlers(socket: Socket) {
     const entry = getOrCreateRoomTsMap(roomId);
     entry.adminUserId = mapping.userId;
     entry.tsMap = { [mapping.userId]: effectiveTime };
+    // lastEmit güncel tut; yoksa sonraki heartbeat'lerde timeSinceEmit uçar.
     entry.lastEmit = now();
 
     broadcastToRoom(roomId, 'playback:state', {

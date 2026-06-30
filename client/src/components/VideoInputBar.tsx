@@ -45,7 +45,7 @@ export default function VideoInputBar() {
         youtubeUrl: trimmed,
       });
     } else {
-      addToast('Geçerli bir YouTube, mp4 veya m3u8 linki gir.', 'error');
+      addToast('Geçerli bir YouTube linki gir.', 'error');
       setLoading(false);
       return;
     }
@@ -72,7 +72,7 @@ export default function VideoInputBar() {
         </div>
         <input
           type="text"
-          placeholder="YouTube, mp4 veya m3u8 linki yapıştır"
+          placeholder="YouTube linki yapıştır"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={handleKeyDown}

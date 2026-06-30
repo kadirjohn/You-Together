@@ -175,16 +175,8 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       safeCall(() => playerRef.current?.setPlaybackRate(1));
       lastAppliedPlaybackRate.current = 1;
     }
-    // Guard penceresi bitince applyingRemoteUpdate false; ama seek sonrası
-    // BUFFERING uzun sürerse, BUFFERING onStateChange handler'ı guard'ı
-    // otomatik uzatır (kendi kendine resync döngüsünü kırar).
     setTimeout(() => { applyingRemoteUpdate.current = false; }, guardMs);
   }, [seekTo, startPlayback, pausePlayback, safeCall]);
-
-  // Guard penceresini uzat (seek sonrası buffering'de kullanılır).
-  const extendRemoteGuard = useCallback((extraMs: number) => {
-    remoteGuardUntil.current = Math.max(remoteGuardUntil.current, Date.now() + extraMs);
-  }, []);
 
   // Admin liderinin gerçek konumuna zorla resync (hard seek + play/pause).
   const resyncToLeader = useCallback(() => {
@@ -386,8 +378,11 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
                 setBuffering(true);
                 useRoomStore.getState().setSyncStatus('buffering');
               }
-              // Seek sonrası uzun buffering'de resync loop'unu kır: guard uzat.
-              extendRemoteGuard(700);
+              // NOT: guard'ı burada uzatmıyoruz. Uzatma, admin'in kendi
+              // oynat/duraklat eylemi sonrası player BUFFERING → PLAYING
+              // geçişinde yeni event'i engeller, bu da geç katılanların
+              // resume'ini almamasına yol açar. roomStatus + applyingRemoteUpdate
+              // zaten echo'yu önlüyor.
               const rid = roomIdRef.current;
               if (rid) getSocket().emit('client:buffering', { roomId: rid });
               return;
@@ -838,10 +833,15 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
       {videoEnded && !buffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/85 backdrop-blur-sm z-20 pointer-events-auto animate-fade-in">
           <div className="text-center px-6">
-            <div className="text-5xl mb-3 animate-float">🎬</div>
+            <div className="flex justify-center mb-3 animate-float">
+              <svg className="w-16 h-16 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="6" width="20" height="12" rx="2" />
+                <path d="M10 12l4-2.5v5L10 12z" />
+              </svg>
+            </div>
             <p className="text-text-main text-lg font-bold">Video bitti</p>
             <p className="text-text-muted text-sm mt-2 font-semibold">
-              Yeni bir video başlatmak için adminin/odanın sahibinin yeni bir YouTube linki eklemesi gerek.
+              Yeni bir video başlatmak için admin yeni bir YouTube linki eklemeli
             </p>
             <button onClick={handleRejoinRoom}
               className="mt-4 px-5 py-2.5 bg-red-main text-white font-semibold rounded-xl

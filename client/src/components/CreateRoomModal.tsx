@@ -117,7 +117,7 @@ export default function CreateRoomModal() {
       }
 
       navigate(`/room/${data.roomId}`);
-      addToast('Oda oluşturuldu! 🎉', 'success');
+      addToast('Oda oluşturuldu', 'success');
     };
 
     const errorHandler = (data: { message: string }) => {
@@ -160,7 +160,7 @@ export default function CreateRoomModal() {
         /* ── Step 1: YouTube link ── */
         <div className="space-y-4">
           <p className="text-text-muted text-base font-bold">
-            İzlemek istediğin YouTube linkini buraya yapıştır!
+            İzlemek istediğin YouTube linkini buraya yapıştır
             <br />
             <span className="text-text-muted/50 text-sm font-semibold">Video linki sonra da eklenebilir</span>
           </p>
@@ -209,8 +209,12 @@ export default function CreateRoomModal() {
 
           {/* YouTube URL summary */}
           {youtubeUrl.trim() && (
-            <div className="px-3.5 py-2.5 bg-bg-card border-2 border-white/5 rounded-xl text-sm text-text-muted truncate font-semibold">
-              🎥 {youtubeUrl}
+            <div className="px-3.5 py-2.5 bg-bg-card border-2 border-white/5 rounded-xl text-sm text-text-muted truncate font-semibold flex items-center gap-2">
+              <svg className="w-4 h-4 text-red-main shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="6" width="20" height="12" rx="2" />
+                <path d="M10 12l4-2.5v5L10 12z" />
+              </svg>
+              {youtubeUrl}
             </div>
           )}
 

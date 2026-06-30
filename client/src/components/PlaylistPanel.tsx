@@ -20,7 +20,7 @@ export default function PlaylistPanel() {
     if (!url.trim()) return;
     const mediaType = detectMediaType(url.trim());
     if (!mediaType) {
-      addToast('Geçerli bir YouTube, mp4 veya m3u8 linki gir.', 'error');
+      addToast('Geçerli bir YouTube linki gir.', 'error');
       return;
     }
     getSocket().emit('playlist:add', {
@@ -59,7 +59,7 @@ export default function PlaylistPanel() {
           <div className="space-y-2">
             <input
               type="text"
-              placeholder="YouTube / mp4 / m3u8 URL"
+              placeholder="YouTube URL"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -67,7 +67,7 @@ export default function PlaylistPanel() {
             />
             <input
               type="text"
-              placeholder="Başlık (opsiyonel)"
+              placeholder="Başlık"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -128,8 +128,12 @@ export default function PlaylistPanel() {
                   <button
                     onClick={() => handleRemove(item.id)}
                     className="p-1.5 text-text-muted hover:text-red-main"
+                    title="Kaldır"
                   >
-                    ✕
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 6L6 18" />
+                      <path d="M6 6l12 12" />
+                    </svg>
                   </button>
                 </div>
               )}

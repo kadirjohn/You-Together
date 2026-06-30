@@ -45,8 +45,7 @@ export default function ChatPanel({ embedded = false }: { embedded?: boolean }) 
   };
 
   const roleBadge = (role: string) => {
-    if (role === 'owner') return <span className="text-xs bg-red-main/20 text-red-soft px-2 py-0.5 rounded-lg font-bold border border-red-main/20">Sahip</span>;
-    if (role === 'admin') return <span className="text-xs bg-red-main/10 text-red-soft/80 px-2 py-0.5 rounded-lg font-bold border border-red-main/10">Admin</span>;
+    if (role === 'owner' || role === 'admin') return <span className="text-xs bg-red-main/20 text-red-soft px-2 py-0.5 rounded-lg font-bold border border-red-main/20">Admin</span>;
     return null;
   };
 
@@ -68,8 +67,12 @@ export default function ChatPanel({ embedded = false }: { embedded?: boolean }) 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2">
         {messages.length === 0 && (
           <div className="text-center text-text-muted text-sm py-8 font-bold animate-bounce-in">
-            <div className="text-4xl mb-2">💬</div>
-            İlk mesajı yazan sen ol!
+            <div className="flex justify-center mb-2">
+              <svg className="w-12 h-12 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7A8.38 8.38 0 01 4 11.5a8.5 8.5 0 01 4.7-7.6 8.38 8.38 0 01 3.8-.9h.5a8.48 8.48 0 01 8 8v.5z" />
+              </svg>
+            </div>
+            İlk mesajı yazan sen ol
           </div>
         )}
         {messages.map((msg) => {

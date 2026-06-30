@@ -55,10 +55,9 @@ export default function WatchList() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2">
         {watchlist.length === 0 && (
           <div className="text-center text-text-muted text-sm py-8 font-bold animate-bounce-in">
-            <div className="text-4xl mb-2">📺</div>
-            Henüz video izlenmedi.
+            Henüz video izlenmedi
             <p className="text-text-muted/60 text-xs mt-1 font-semibold">
-              Admin bir video başlatınca burada birikecek.
+              Admin bir video başlatınca burada birikecek
             </p>
           </div>
         )}
@@ -87,7 +86,12 @@ export default function WatchList() {
                     loading="lazy"
                   />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-2xl">🎬</div>
+                  <div className="w-full h-full flex items-center justify-center text-text-muted">
+                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="6" width="20" height="12" rx="2" />
+                      <path d="M10 12l4-2.5v5L10 12z" />
+                    </svg>
+                  </div>
                 )}
                 {/* Süre badge */}
                 <span className="absolute bottom-1 right-1 text-[10px] font-bold bg-black/80 text-white px-1.5 py-0.5 rounded-md font-mono">

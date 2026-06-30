@@ -33,8 +33,11 @@ export default function RoomCard({ room, onJoin }: RoomCardProps) {
             loading="lazy"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-5xl animate-float">
-            🎬
+          <div className="w-full h-full flex items-center justify-center animate-float">
+            <svg className="w-16 h-16 text-red-main/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="6" width="20" height="12" rx="2" />
+              <path d="M10 12l4-2.5v5L10 12z" />
+            </svg>
           </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-bg-card via-transparent to-transparent" />
@@ -61,14 +64,30 @@ export default function RoomCard({ room, onJoin }: RoomCardProps) {
               </svg>
               {room.userCount}/{room.maxUsers}
             </span>
-            <span className={`text-xs px-2.5 py-1 rounded-xl font-bold border-2 ${
+            <span className={`text-xs px-2.5 py-1 rounded-xl font-bold border-2 flex items-center gap-1 ${
               statusLabel === 'İzleniyor'
                 ? 'bg-red-main/20 text-red-soft border-red-main/20'
                 : statusLabel === 'Bekliyor'
                   ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20'
                   : 'bg-white/5 text-text-muted border-white/5'
             }`}>
-              {statusLabel === 'İzleniyor' ? '▶ İzleniyor' : statusLabel === 'Bekliyor' ? '⏸ Bekliyor' : '○ Boş'}
+              {statusLabel === 'İzleniyor' && (
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              )}
+              {statusLabel === 'Bekliyor' && (
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                </svg>
+              )}
+              {statusLabel === 'Boş' && (
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                </svg>
+              )}
+              {statusLabel}
             </span>
           </div>
           <button
@@ -83,7 +102,7 @@ export default function RoomCard({ room, onJoin }: RoomCardProps) {
               onJoin();
             }}
           >
-            {room.userCount >= room.maxUsers ? 'Dolu 😔' : 'Katıl →'}
+            {room.userCount >= room.maxUsers ? 'Dolu' : 'Katıl'}
           </button>
         </div>
       </div>

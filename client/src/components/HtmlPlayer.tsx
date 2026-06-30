@@ -538,10 +538,15 @@ export default function HtmlPlayer({ mediaType, mediaUrl }: HtmlPlayerProps) {
       {videoEnded && !buffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/85 backdrop-blur-sm z-20 pointer-events-auto animate-fade-in">
           <div className="text-center px-6">
-            <div className="text-5xl mb-3 animate-float">🎬</div>
+            <div className="flex justify-center mb-3 animate-float">
+              <svg className="w-16 h-16 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="6" width="20" height="12" rx="2" />
+                <path d="M10 12l4-2.5v5L10 12z" />
+              </svg>
+            </div>
             <p className="text-text-main text-lg font-bold">Video bitti</p>
             <p className="text-text-muted text-sm mt-2 font-semibold">
-              Yeni bir medya başlatmak için adminin/odanın sahibinin yeni bir URL eklemesi gerek.
+              Yeni bir video başlatmak için admin yeni bir URL eklemeli
             </p>
           </div>
         </div>

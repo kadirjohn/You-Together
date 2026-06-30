@@ -60,7 +60,7 @@ export default function SubtitleModal({ open, onClose }: SubtitleModalProps) {
         <div className="space-y-4">
           <input
             type="text"
-            placeholder="SRT/VTT URL'si (opsiyonel)"
+            placeholder="SRT/VTT URL'si"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleUrl()}

@@ -37,9 +37,8 @@ export default function UserList() {
   const roleBadge = (role: string) => {
     switch (role) {
       case 'owner':
-        return <span className="text-xs bg-red-main/20 text-red-soft px-2 py-0.5 rounded-lg font-bold border border-red-main/20">👑 Sahip</span>;
       case 'admin':
-        return <span className="text-xs bg-red-soft/15 text-red-soft/80 px-2 py-0.5 rounded-lg font-bold border border-red-soft/15">⭐ Admin</span>;
+        return <span className="text-xs bg-red-main/20 text-red-soft px-2 py-0.5 rounded-lg font-bold border border-red-main/20">Admin</span>;
       default:
         return <span className="text-xs bg-white/5 text-text-muted px-2 py-0.5 rounded-lg font-bold border border-white/5">İzleyici</span>;
     }

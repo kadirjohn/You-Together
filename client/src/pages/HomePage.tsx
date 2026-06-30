@@ -85,11 +85,12 @@ export default function HomePage() {
 
         <h2 className="text-4xl md:text-5xl font-extrabold mb-4 tracking-tight leading-tight">
           Arkadaşlarınla aynı anda{' '}
-          <span className="text-red-main glow-red-sm inline-block px-2 rounded-xl">YouTube</span>{' '}
-          izle!
+          <span className="text-red-main glow-red-sm inline-block px-2 rounded-xl">YouTube</span>
+          <span className="text-white glow-white-sm inline-block px-1 rounded-xl">'dan</span>{' '}
+          video izle
         </h2>
         <p className="text-text-muted text-lg mb-8 leading-relaxed font-semibold">
-          Oda kur, linki at, hep birlikte izleyin!
+          Oda kur, linki at, hep birlikte izleyin
         </p>
         <div className="flex gap-3 justify-center">
           <button
@@ -125,12 +126,20 @@ export default function HomePage() {
           </div>
         ) : rooms.length === 0 ? (
           <div className="text-center py-16 bg-bg-panel/30 rounded-3xl border-[3px] border-white/5 animate-bounce-in">
-            <div className="text-6xl mb-4 animate-float">🎬</div>
+            <div className="flex justify-center mb-4 animate-float">
+              <svg className="w-16 h-16 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="20" height="20" rx="2.18" />
+                <path d="M7 2v20" />
+                <path d="M17 2v20" />
+                <path d="M2 12h20" />
+                <path d="M2 7h5" />
+                <path d="M2 17h5" />
+                <path d="M17 17h5" />
+                <path d="M17 7h5" />
+              </svg>
+            </div>
             <p className="text-text-muted text-lg font-bold">
-              Henüz açık oda yok.
-            </p>
-            <p className="text-text-muted/60 text-sm mt-1 font-semibold">
-              İlk odayı sen kur! 🎉
+              Henüz açık oda yok
             </p>
           </div>
         ) : (

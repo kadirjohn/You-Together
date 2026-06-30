@@ -348,7 +348,7 @@ export default function RoomPage() {
     };
 
     const handleUserJoined = (data: { user: RoomUser }) => {
-      addToast(`${data.user.displayName} odaya katıldı 👋`);
+      addToast(`${data.user.displayName} odaya katıldı`);
     };
 
     const handleUserLeft = (data: { userId: string }) => {
@@ -382,7 +382,7 @@ export default function RoomPage() {
 
     const handleDisconnect = () => {
       if (joined) {
-        addToast('Bağlantı kesildi, yeniden bağlanılıyor... ⚡', 'warning');
+        addToast('Bağlantı kesildi, yeniden bağlanılıyor', 'warning');
       }
     };
 
@@ -666,8 +666,6 @@ export default function RoomPage() {
           <div className="flex-1 min-w-0">
             {/* Admin Video Input */}
             <VideoInputBar />
-            {/* Admin Playback Controls (rate / loop / subtitle) */}
-            <PlaybackControls />
 
             {/* Senkron badge — player'ın hemen üstünde, sağa yaslı.
                 Player içinde değil ki native tuşları (kalite/altyazı/fullscreen)
@@ -690,14 +688,21 @@ export default function RoomPage() {
               {!room.playback.mediaType && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/80">
                   <div className="text-center animate-bounce-in">
-                    <div className="text-6xl mb-4 animate-float">🎥</div>
-                    <p className="text-text-muted text-lg font-bold">Henüz medya eklenmedi</p>
-                    <p className="text-text-muted/60 text-sm mt-1 font-semibold">
-                      Admin bir YouTube linki veya mp4/m3u8 URL'i eklediğinde burada görünecek.
-                    </p>
+                    <div className="flex justify-center mb-4 animate-float">
+                      <svg className="w-16 h-16 text-red-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2" y="6" width="20" height="12" rx="2" />
+                        <path d="M10 12l4-2.5v5L10 12z" />
+                      </svg>
+                    </div>
+                    <p className="text-text-muted text-lg font-bold">Henüz video eklenmedi</p>
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Admin Playback Controls (rate / loop / subtitle) — video altında */}
+            <div className="mt-3">
+              <PlaybackControls />
             </div>
 
             {/* User List */}

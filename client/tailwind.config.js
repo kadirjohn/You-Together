@@ -19,6 +19,8 @@ export default {
       boxShadow: {
         'glow-red': '0 0 12px rgba(255, 0, 51, 0.45), 0 0 32px rgba(255, 0, 51, 0.2)',
         'glow-red-sm': '0 0 8px rgba(255, 0, 51, 0.35), 0 0 16px rgba(255, 0, 51, 0.15)',
+        'glow-white': '0 0 12px rgba(255, 255, 255, 0.25), 0 0 32px rgba(255, 255, 255, 0.1)',
+        'glow-white-sm': '0 0 8px rgba(255, 255, 255, 0.2), 0 0 16px rgba(255, 255, 255, 0.08)',
         'cartoon': '0 4px 0 rgba(0, 0, 0, 0.4), 0 6px 12px rgba(0, 0, 0, 0.3)',
         'cartoon-sm': '0 3px 0 rgba(0, 0, 0, 0.35), 0 4px 8px rgba(0, 0, 0, 0.25)',
         'cartoon-card': '0 4px 0 rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.2)',
