@@ -21,10 +21,12 @@ services:
       dockerfile: ./server/Dockerfile
     container_name: you-together-server
     restart: unless-stopped
-    # Reverse proxy (nginx/Caddy/Cloudflare Tunnel) buraya iletir.
-    # Doğrudan host:3000 expose de çalışır; CF Flexible modunda yeterli.
+    # Host'un 3000 portu meşgul olduğu için host-side portu 3001 olarak değiştirdik.
+    # Container içi yine 3000'de dinler (PORT env). Sadece 127.0.0.1'e bağladık —
+    # dışarıya açık değil, reverse proxy (localhost) erişir. Güvenli.
+    # Çakışma yine olursa 3001'i 3002/3003... ile değiştir.
     ports:
-      - '3000:3000'
+      - '127.0.0.1:3001:3000'
     env_file:
       - .env
     environment:

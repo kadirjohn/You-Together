@@ -109,8 +109,10 @@ edge sertifikası tarafından sonlandırılır; origin sunucuda sertifika gerekm
    docker compose up -d --build
    ```
 
-3. Reverse proxy'nizi `https://you.kadirca.com` → `http://<sunucu-ip>:3000`
-   olacak şekilde yönlendirin. **WebSocket upgrade** aktif olmalı (Socket.IO için):
+3. Reverse proxy'nizi `https://you.kadirca.com` → `http://127.0.0.1:3001`
+   olacak şekilde yönlendirin (host-side port, container içi 3000). **WebSocket
+   upgrade** aktif olmalı (Socket.IO için). Host'un 3000 portu meşgulse compose
+   dosyasındaki `127.0.0.1:3001:3000` eşlemesini başka bir boş porta değiştirin.
 
    **nginx örneği:**
 
@@ -120,7 +122,7 @@ edge sertifikası tarafından sonlandırılır; origin sunucuda sertifika gerekm
        server_name you.kadirca.com;
 
        location / {
-           proxy_pass http://127.0.0.1:3000;
+           proxy_pass http://127.0.0.1:3001;
            proxy_http_version 1.1;
            proxy_set_header Host $host;
            proxy_set_header X-Real-IP $remote_addr;
@@ -144,8 +146,8 @@ edge sertifikası tarafından sonlandırılır; origin sunucuda sertifika gerekm
 # Konteynerler ayakta mı
 docker compose ps
 
-# Sağlık kontrolü
-curl http://localhost:3000/api/health
+# Sağlık kontrolü (host-side port — compose dosyasındaki eşleme)
+curl http://127.0.0.1:3001/api/health
 ```
 
 ## Kullanım
