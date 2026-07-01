@@ -18,7 +18,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export async function createApp() {
-  const app = Fastify({ logger: true });
+  // trustProxy: reverse proxy (Cloudflare / nginx / Caddy) arkasında
+  // X-Forwarded-Proto ve X-Forwarded-For başlıklarına güvenilir — aksi
+  // halde tüm istekler "http" ve proxy'nin IP'si olarak görünür.
+  const app = Fastify({ logger: true, trustProxy: true });
 
   // CORS
   await app.register(cors, {

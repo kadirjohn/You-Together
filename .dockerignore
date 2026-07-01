@@ -1,0 +1,26 @@
+# Dependencies (image içinde npm ci ile yeniden kurulur)
+**/node_modules
+
+# Build output (Dockerfile kendi build'ini üretir)
+**/dist
+*.tsbuildinfo
+
+# Environment & secrets — asla image'a girmemeli
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+*.log
+npm-debug.log*
+
+# Proje notları / planlar
+Plans
+trials.md
+proje-ozeti.md
+watchparty
+Summary

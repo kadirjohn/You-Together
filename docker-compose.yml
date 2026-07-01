@@ -1,12 +1,12 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:7-alpine
     container_name: you-together-redis
     restart: unless-stopped
-    ports:
-      - '6379:6379'
+    # Redis yalnızca Docker ağı içinde (server servisine) erişilebilir olmalı.
+    # Host'a port expose ETME — dışarıdan erişime kapat (hardening).
+    expose:
+      - '6379'
     volumes:
       - redis_data:/data
     healthcheck:
@@ -21,19 +21,16 @@ services:
       dockerfile: ./server/Dockerfile
     container_name: you-together-server
     restart: unless-stopped
+    # Reverse proxy (nginx/Caddy/Cloudflare Tunnel) buraya iletir.
+    # Doğrudan host:3000 expose de çalışır; CF Flexible modunda yeterli.
     ports:
       - '3000:3000'
+    env_file:
+      - .env
     environment:
-      NODE_ENV: production
-      PORT: 3000
+      # Compose override emniyet ağı: .env'de yanlışlıkla localhost kalsa bile
+      # container içi Redis erişimi çalışsın.
       REDIS_URL: redis://redis:6379
-      PUBLIC_BASE_URL: http://localhost:3000
-      ROOM_MAX_USERS: 10
-      ROOM_ACTIVE_TTL_SECONDS: 10800
-      ROOM_EMPTY_TTL_SECONDS: 300
-      CHAT_MAX_MESSAGES: 100
-      PIN_MIN_LENGTH: 4
-      PIN_MAX_LENGTH: 12
     depends_on:
       redis:
         condition: service_healthy
